@@ -1,4 +1,4 @@
-use serde::{Deserialize, Deserializer};
+use serde::{Serialize, Deserialize, Deserializer};
 use serde_tuple::Serialize_tuple;
 use serde_repr::{Serialize_repr, Deserialize_repr};
 use num_enum::TryFromPrimitive;
@@ -100,6 +100,12 @@ impl FromI64 for i64 {
   }
 }
 
+#[derive(Serialize, Deserialize)]
+enum Foo {
+  HELLO = 0,
+  WORLD = 1
+}
+
 fn main() {
   let a = RevlogEntry{
     id: 123,
@@ -115,4 +121,8 @@ fn main() {
 
   let s = serde_json::to_string(&a);
   println!("{s:#?}");
+
+  let b = Foo::HELLO;
+  let s2 = serde_json::to_string(&b);
+  println!("{s2:?}");
 }
