@@ -1,6 +1,0 @@
-[workspace]
-members = [
-    "serde_demo",
-    "protobuf_demo",
-    "dense_rank",
-]
