@@ -1,9 +1,9 @@
 use futures::{SinkExt, StreamExt};
 use reqwest;
 use serde_json::json;
+use std::io::Write; // flush
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use std::io::Write; // flush
 
 /// Listen specific web page with `page_url` at the tab `index`
 /// Before we invoke the function, lauch Chrome program with

@@ -2,16 +2,14 @@
 
 use fantoccini::{client::*, elements::*, ClientBuilder, Locator};
 use serde_json::json;
-use tokio;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tokio;
 
-
+use hello::comment_extractor::*;
 use hello::openai;
 use hello::util;
-use hello::comment_extractor::*;
-
 
 #[tokio::main]
 async fn main() {
@@ -32,8 +30,7 @@ async fn main() {
         let mut ce = CommentExtractor::new(infile.unwrap());
         let prompt = "Translate the C code comment I will provide to you. You should translate it to Chinese.";
         let mut prompt_sent = false;
-
-        let mut chatgpt = ChatGPT::new(|| {
+        let user_msg = || {
             let input = util::pause();
             if prompt_sent == false {
                 prompt_sent = true;
@@ -45,9 +42,12 @@ async fn main() {
             } else {
                 input
             }
-        }).await;
-            
-        let _ = chatgpt.startup(flag_tx).await;
+        };
+
+        let mut chatgpt = ChatGPT::new(user_msg).await;
+        if let Err(error) = chatgpt.startup(flag_tx).await {
+            println!("chatgpt.startup: {error:#?}");
+        }
         // let _ = chatgpt.noop_loop(flag_tx).await;
     });
 
@@ -64,7 +64,7 @@ async fn main() {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
         }
-        let _ = util::listen_webpage_stream_data(
+        if let Err(error) = util::listen_webpage_stream_data(
             9222,
             "https://chatgpt.com/",
             0,
@@ -80,7 +80,11 @@ async fn main() {
                     }
                 })
             },
-        ).await;
+        )
+        .await
+        {
+            println!("listen_webpage_stream_data: {error:#?}");
+        }
     });
 
     user.await.unwrap();
@@ -103,7 +107,7 @@ pub trait EventHook {
 
 struct ChatGPT<I>
 where
-    I: FnMut() -> String
+    I: FnMut() -> String,
 {
     client: Client,
     user_msg: I,
@@ -128,7 +132,7 @@ where
                             "--disable-blink-features=AutomationControlled",
                             "--disable-features=InterestCohort",
                             "--disable-features=BrowsingTopics",
-                            "--proxy-server=127.0.0.1:7890",
+                            // "--proxy-server=127.0.0.1:7890",
                             // start a remote port for CDP protocol
                             "--remote-debugging-port=9222",
                             "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
@@ -215,30 +219,53 @@ where
         unreachable!();
     }
 
+    async fn get_send_btn(&self) -> Element {
+        let mut btn = self
+            .client
+            .wait()
+            .at_most(std::time::Duration::from_secs(2))
+            .for_element(Locator::Css("button[data-testid=\"send-button\"]"))
+            .await;
+
+        if btn.is_err() {
+            let btns = self
+                .client
+                .find_all(Locator::Css("button[data-testid]"))
+                .await;
+            if let Err(_) = btns {
+                panic!("can not get any button[data-testid]");
+            }
+            let mut found = false;
+            let mut index = 0;
+            let mut btns = btns.unwrap();
+            for (i, btn) in btns.iter().rev().enumerate() {
+                if let Ok(Some(val)) = btn.attr("data-testid").await {
+                    if val.contains("send-button") {
+                        found = true;
+                        index = i;
+                        break;
+                    }
+                }
+            }
+            if !found {
+                panic!("can not get any button[data-testid=\"*send-button\"]");
+            }
+            btn = Ok(btns.remove(index));
+        }
+        btn.unwrap()
+    }
+
     async fn send_user_msg(&self) -> Result<bool, fantoccini::error::CmdError> {
         // have to re-find the send button
-        let mut send_elm = self.client
-            .find(Locator::Css("button[data-testid=\"send-button\"]"))
-            .await;
-        if let Err(error) = send_elm {
-            println!("send-button: {error:#?}");
-            let all_btns = self.client.find_all(Locator::Css("button[data-testid]")).await;
-            if let Err(error) = all_btns {
-                println!("can not find button[data-testid]: {error:#?}");
-                return Ok(false);
-            }
-            send_elm = Ok(all_btns.unwrap().pop().unwrap());
-        } 
+        let send_btn = self.get_send_btn().await;
 
         util::pause();
 
-        let send_btn = send_elm.unwrap();
-        // println!("send button: {:#?}", &send_btn.html(false).await);
         if let Err(error) = &send_btn.click().await {
             println!("send-button click: {error:#?}");
             Ok(false)
         } else {
-            println!("send button clicked: {:#?} ", &send_btn);
+            println!("send button clicked: {:#?} ", &send_btn.html(false).await);
             Ok(true)
         }
     }
@@ -248,17 +275,17 @@ where
             WebState::LoggingIn => {
                 println!("1.1 logging in...");
                 self.bypass_cloudfare().await.ok()
-            },
+            }
             WebState::LoginTip => {
                 println!("1.2 logging tip...");
                 let _ = WebState::close_login_tip(&self.client).await;
                 self.get_chatbox(1).await
-            },
+            }
             WebState::Tired => {
                 println!("1.3 tired...");
                 tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
                 self.get_chatbox(1).await
-            },
+            }
             WebState::NeedReopen => {
                 println!("1.4 reopen...");
                 let _ = WebState::reopen_chatbox(&self.client).await;
@@ -269,11 +296,11 @@ where
                     }
                 }
                 cb
-            },
+            }
             WebState::ChatReady => {
                 println!("1.5 chat ready...");
                 self.get_chatbox(1).await
-            },
+            }
             WebState::MsgSending(ref mut n) => {
                 println!("1.6 msg sending...{}", *n);
                 if *n > 5 {
@@ -285,16 +312,14 @@ where
                     *n = *n + 1;
                 }
                 self.get_chatbox(1).await
-            },
-            WebState::Talking => {
-                self.get_chatbox(1).await
             }
+            WebState::Talking => self.get_chatbox(1).await,
         }
     }
 
     async fn resort_to_rescue_page(&self) -> Result<(), fantoccini::error::CmdError> {
         let client = &self.client;
-        
+
         client.goto("https://openai.com/index/chatgpt/").await?;
 
         // "Try ChatGPT" butthon
@@ -323,9 +348,10 @@ where
         // client.wait().at_most(std::time::Duration::from_secs(10)).for_element(button_selector).await?;
         // let button = client.find(button_selector).await?;
 
-        // Find the cloudfare input checkbox. 
+        // Find the cloudfare input checkbox.
         let checkbox_loc = Locator::Css("input[type=\"checkbox\"]");
-        let rst = self.client
+        let rst = self
+            .client
             .wait()
             .at_most(std::time::Duration::from_secs(10))
             .for_element(checkbox_loc)
@@ -353,15 +379,16 @@ where
     }
 
     async fn get_chatbox(&self, timeout: u64) -> Option<Element> {
-        let elm = self.client
-                    .wait()
-                    .at_most(std::time::Duration::from_secs(timeout))
-                    .for_element(Locator::Css("#prompt-textarea"))
-                    .await;
+        let elm = self
+            .client
+            .wait()
+            .at_most(std::time::Duration::from_secs(timeout))
+            .for_element(Locator::Css("#prompt-textarea"))
+            .await;
         if let Err(error) = elm {
             println!("get #prompt-textarea: {:#?}", error);
             // util::pause();
-            return None
+            return None;
         }
         return elm.ok();
     }
@@ -400,7 +427,9 @@ where
         }
 
         // switch to the first tab page
-        client.switch_to_window(client.windows().await?.remove(0)).await?;
+        client
+            .switch_to_window(client.windows().await?.remove(0))
+            .await?;
 
         // wait for the user to login the first tab page
         let mut n = 0;
@@ -441,7 +470,10 @@ impl WebState {
     }
 
     async fn is_msg_sending(client: &Client) -> bool {
-        let btn = client.find(Locator::Css("button[data-testid=\"send-button\"]")).await.unwrap();
+        let btn = client
+            .find(Locator::Css("button[data-testid=\"send-button\"]"))
+            .await
+            .unwrap();
         !btn.is_enabled().await.unwrap() && btn.find(Locator::Css("svg.animate-spin")).await.is_ok()
     }
 
@@ -518,7 +550,9 @@ impl WebState {
     }
 
     async fn is_talking(client: &Client) -> bool {
-        let mut btn = client.find(Locator::Css("button[data-testid=\"send-button\"]")).await;
+        let mut btn = client
+            .find(Locator::Css("button[data-testid=\"send-button\"]"))
+            .await;
         if btn.is_err() {
             let btns = client.find_all(Locator::Css("button[data-testid]")).await;
             if let Err(_) = btns {
@@ -529,11 +563,11 @@ impl WebState {
             let mut btns = btns.unwrap();
             for (i, btn) in btns.iter().rev().enumerate() {
                 if let Ok(Some(val)) = btn.attr("data-testid").await {
-                   if val.contains("send-button") { 
-                       found = true;
-                       index = i;
-                       break;
-                   }
+                    if val.contains("send-button") {
+                        found = true;
+                        index = i;
+                        break;
+                    }
                 }
             }
             if !found {
@@ -542,6 +576,7 @@ impl WebState {
             btn = Ok(btns.remove(index));
         }
         let btn = btn.unwrap();
-        btn.is_enabled().await.unwrap_or(false) && btn.find(Locator::Css("svg > rect")).await.is_ok()
+        btn.is_enabled().await.unwrap_or(false)
+            && btn.find(Locator::Css("svg > rect")).await.is_ok()
     }
 }
