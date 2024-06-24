@@ -10,18 +10,41 @@ use std::sync::Arc;
 
 use hello::openai;
 use hello::util;
+use hello::comment_extractor::*;
 
 
 #[tokio::main]
 async fn main() {
+    let mut args: Vec<_> = std::env::args().collect();
+    if args.len() != 2 {
+        panic!("usage: {} <c code file>", args[0]);
+    }
+    let infile = args.remove(1);
+    let infile = std::fs::File::open(infile);
+    if let Err(error) = infile {
+        panic!("open file: {error:#?}");
+    }
     let flag = Arc::new(AtomicBool::new(false));
 
     let flag_tx = Arc::clone(&flag);
 
     let user = tokio::task::spawn(async move {
-        let chatgpt = ChatGPT::new(|| {
-            util::pause();
-            "hello".to_string()
+        let mut ce = CommentExtractor::new(infile.unwrap());
+        let prompt = "Translate the C code comment I will provide to you. You should translate it to Chinese.";
+        let mut prompt_sent = false;
+
+        let mut chatgpt = ChatGPT::new(|| {
+            let input = util::pause();
+            if prompt_sent == false {
+                prompt_sent = true;
+                return prompt.to_string();
+            }
+            if let Some(comm) = ce.next() {
+                println!("my comment:\n{}", comm.content);
+                comm.content
+            } else {
+                input
+            }
         }).await;
             
         let _ = chatgpt.startup(flag_tx).await;
@@ -80,7 +103,7 @@ pub trait EventHook {
 
 struct ChatGPT<I>
 where
-    I: Fn() -> String
+    I: FnMut() -> String
 {
     client: Client,
     user_msg: I,
@@ -88,7 +111,7 @@ where
 
 impl<I> ChatGPT<I>
 where
-    I: Fn() -> String,
+    I: FnMut() -> String,
 {
     // type Result = Result<(), fantoccini::error::CmdError>;
 
@@ -138,7 +161,7 @@ where
     }
 
     #[allow(unreachable_code)]
-    async fn startup(&self, flag: Arc<AtomicBool>) -> Result<(), fantoccini::error::CmdError> {
+    async fn startup(&mut self, flag: Arc<AtomicBool>) -> Result<(), fantoccini::error::CmdError> {
         let client = &self.client;
 
         if let Err(error) = client.goto("https://chatgpt.com/").await {
@@ -162,9 +185,11 @@ where
             while WebState::is_talking(&self.client).await {
                 tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             }
-            println!("3. send_keys");
+            println!("3. send_keys...");
+            let mymsg = (self.user_msg)();
+            println!("mymsg is {mymsg}");
             // handle many cases until user message can be put into chatbox
-            if let Err(error) = chatbox.send_keys(&(self.user_msg)()).await {
+            if let Err(error) = chatbox.send_keys(&mymsg).await {
                 println!("send_keys error: {error:#?}");
                 println!("7. open_chatbox");
                 let _ = self.open_chatbox().await;
@@ -205,13 +230,7 @@ where
             send_elm = Ok(all_btns.unwrap().pop().unwrap());
         } 
 
-        #[cfg(feature = "manual")]
-        {
-            let input = util::pause();
-            if input == "q" {
-                let _ = self.close().await;
-            }
-        }
+        util::pause();
 
         let send_btn = send_elm.unwrap();
         // println!("send button: {:#?}", &send_btn.html(false).await);
