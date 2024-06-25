@@ -13,11 +13,12 @@ use hello::util;
 
 #[tokio::main]
 async fn main() {
-    let mut args: Vec<_> = std::env::args().collect();
-    if args.len() != 2 {
-        panic!("usage: {} <c code file>", args[0]);
-    }
-    let infile = args.remove(1);
+    // let mut args: Vec<_> = std::env::args().collect();
+    // if args.len() != 2 {
+    //     panic!("usage: {} <c code file>", args[0]);
+    // }
+    // let infile = args.remove(1);
+    let infile = "remote_transaction.c";
     let infile = std::fs::File::open(infile);
     if let Err(error) = infile {
         panic!("open file: {error:#?}");
@@ -27,28 +28,43 @@ async fn main() {
     let flag_tx = Arc::clone(&flag);
 
     let user = tokio::task::spawn(async move {
-        let mut ce = CommentExtractor::new(infile.unwrap());
-        let prompt = "Translate the C code comment I will provide to you. You should translate it to Chinese.";
-        let mut prompt_sent = false;
-        let user_msg = || {
-            let input = util::pause();
-            if prompt_sent == false {
-                prompt_sent = true;
-                return prompt.to_string();
-            }
-            if let Some(comm) = ce.next() {
-                println!("my comment:\n{}", comm.content);
-                comm.content
-            } else {
-                input
-            }
-        };
+        // Open the file
+        let ce = CommentExtractor::new(infile.unwrap());
 
-        let mut chatgpt = ChatGPT::new(user_msg).await;
+        struct MyIter {
+            ce: CommentExtractor,
+            initial_prompt: String,
+            initial_prompt_sent: bool,
+        }
+
+        impl MyIter {
+            fn new(ce: CommentExtractor, initial_prompt: String) -> Self {
+                MyIter {
+                    ce,
+                    initial_prompt,
+                    initial_prompt_sent: false,
+                }
+            }
+        }
+
+        impl Iterator for MyIter {
+            type Item = Result<String, std::io::Error>;
+
+            fn next(&mut self) -> Option<Result<String, std::io::Error>> {
+                if self.initial_prompt_sent {
+                    return self.ce.next().map(|cc| Ok(cc.content));
+                }
+                self.initial_prompt_sent = true;
+                Some(Ok(self.initial_prompt.clone()))
+            }
+        }
+
+        let ip = "Translate the following C code comment into Chinese".to_string();
+        let mut chatgpt = ChatGPT::new(Box::new(MyIter::new(ce, ip).into_iter())).await;
         if let Err(error) = chatgpt.startup(flag_tx).await {
             println!("chatgpt.startup: {error:#?}");
         }
-        // let _ = chatgpt.noop_loop(flag_tx).await;
+        chatgpt.close().await.unwrap();
     });
 
     let flag_rx = Arc::clone(&flag);
@@ -107,19 +123,17 @@ pub trait EventHook {
 
 struct ChatGPT<I>
 where
-    I: FnMut() -> String,
+    I: Iterator<Item = Result<String, std::io::Error>>,
 {
     client: Client,
-    user_msg: I,
+    user_stream_msg: I,
 }
 
 impl<I> ChatGPT<I>
 where
-    I: FnMut() -> String,
+    I: Iterator<Item = Result<String, std::io::Error>>,
 {
-    // type Result = Result<(), fantoccini::error::CmdError>;
-
-    async fn new(user: I) -> Self {
+    async fn new(stream_input: I) -> Self {
         // Define the Chrome capabilities
         let mut caps = serde_json::map::Map::new();
         caps.insert("goog:chromeOptions".to_string(),
@@ -147,11 +161,11 @@ where
             .capabilities(caps)
             .connect("http://localhost:9515")
             .await
-            .expect("failed to connect to WebDriver");
+            .expect("connect to http://localhost:9515");
 
         ChatGPT {
             client,
-            user_msg: user,
+            user_stream_msg: stream_input,
         }
     }
 
@@ -184,21 +198,24 @@ where
                     continue;
                 }
             }
-            let chatbox = chatbox.unwrap();
 
             while WebState::is_talking(&self.client).await {
                 tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
             println!("3. send_keys...");
-            let mymsg = (self.user_msg)();
-            println!("mymsg is {mymsg}");
-            // handle many cases until user message can be put into chatbox
-            if let Err(error) = chatbox.send_keys(&mymsg).await {
-                println!("send_keys error: {error:#?}");
-                println!("7. open_chatbox");
-                let _ = self.open_chatbox().await;
-                continue;
+            let mymsg = self.user_stream_msg.next();
+            if mymsg.is_none() {
+                println!("no more user message...Bye Bye");
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                break;
             }
+            let mymsg = mymsg.unwrap().unwrap();
+            println!("mymsg is\n{}", mymsg);
+            println!("ready to send immediately...");
+            let _ = util::pause().await;
+            self.set_user_msg(&mymsg).await?;
 
             // wait until user the message could be sent to openai
             loop {
@@ -216,56 +233,52 @@ where
             // take a break
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         }
-        unreachable!();
+        Ok(())
     }
 
-    async fn get_send_btn(&self) -> Element {
-        let mut btn = self
+    async fn set_user_msg(&self, msg: &str) -> Result<(), fantoccini::error::CmdError> {
+        let msg = msg.replace("\n", "\\n");
+        let msg = msg.replace("\t", "\\t");
+        let msg = msg.replace("'", "\\'");
+        if let Err(error) = self
             .client
-            .wait()
-            .at_most(std::time::Duration::from_secs(2))
-            .for_element(Locator::Css("button[data-testid=\"send-button\"]"))
-            .await;
-
-        if btn.is_err() {
-            let btns = self
-                .client
-                .find_all(Locator::Css("button[data-testid]"))
-                .await;
-            if let Err(_) = btns {
-                panic!("can not get any button[data-testid]");
-            }
-            let mut found = false;
-            let mut index = 0;
-            let mut btns = btns.unwrap();
-            for (i, btn) in btns.iter().rev().enumerate() {
-                if let Ok(Some(val)) = btn.attr("data-testid").await {
-                    if val.contains("send-button") {
-                        found = true;
-                        index = i;
-                        break;
-                    }
-                }
-            }
-            if !found {
-                panic!("can not get any button[data-testid=\"*send-button\"]");
-            }
-            btn = Ok(btns.remove(index));
+            .execute(
+                &format!(
+                    "document.querySelector('#prompt-textarea').value = '{}'",
+                    msg
+                ),
+                vec![],
+            )
+            .await
+        {
+            println!("set_user_msg: {error:#?}");
         }
-        btn.unwrap()
+        Ok(())
     }
 
     async fn send_user_msg(&self) -> Result<bool, fantoccini::error::CmdError> {
+        // make #prompt-textarea active else the send button will still be disabled
+        if let Some(chatbox) = self.get_chatbox(1).await {
+            if let Err(error) = chatbox.send_keys("\n").await {
+                println!("send_keys: {error:#?}");
+                util::pause_force().await;
+                return Ok(false);
+            }
+        }
+
         // have to re-find the send button
-        let send_btn = self.get_send_btn().await;
+        let send_btn = get_send_btn(&self.client).await;
 
-        util::pause();
+        // println!("Are yre ready to click?");
+        let _ = util::pause().await;
 
+        println!("send button: {:#?}", send_btn.html(false).await);
         if let Err(error) = &send_btn.click().await {
             println!("send-button click: {error:#?}");
             Ok(false)
         } else {
-            println!("send button clicked: {:#?} ", &send_btn.html(false).await);
+            // at this time, send_btn could be staled
+            println!("send button clicked");
             Ok(true)
         }
     }
@@ -387,7 +400,7 @@ where
             .await;
         if let Err(error) = elm {
             println!("get #prompt-textarea: {:#?}", error);
-            // util::pause();
+            util::pause_force().await;
             return None;
         }
         return elm.ok();
@@ -449,6 +462,46 @@ where
     async fn close(self) -> Result<(), fantoccini::error::CmdError> {
         // Close the browser
         self.client.close().await
+    }
+}
+
+async fn get_send_btn(client: &Client) -> Element {
+    loop {
+        let mut btn = client
+            .wait()
+            .at_most(std::time::Duration::from_secs(2))
+            .for_element(Locator::Css("button[data-testid=\"send-button\"]"))
+            .await;
+
+        if btn.is_err() {
+            let _ = util::pause().await;
+
+            let btns = client.find_all(Locator::Css("button[data-testid]")).await;
+            if let Err(_) = btns {
+                println!("could not get any button[data-testid]...sleep a while...");
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                continue;
+            }
+            let mut found = false;
+            let mut index = 0;
+            let mut btns = btns.unwrap();
+            for (i, btn) in btns.iter().rev().enumerate() {
+                if let Ok(Some(val)) = btn.attr("data-testid").await {
+                    if val.contains("send-button") {
+                        found = true;
+                        index = i;
+                        break;
+                    }
+                }
+            }
+            if !found {
+                println!("could not get any button[data-testid=\"*send-button\"]");
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                continue;
+            }
+            btn = Ok(btns.remove(index));
+        }
+        return btn.unwrap();
     }
 }
 
@@ -550,32 +603,7 @@ impl WebState {
     }
 
     async fn is_talking(client: &Client) -> bool {
-        let mut btn = client
-            .find(Locator::Css("button[data-testid=\"send-button\"]"))
-            .await;
-        if btn.is_err() {
-            let btns = client.find_all(Locator::Css("button[data-testid]")).await;
-            if let Err(_) = btns {
-                return false;
-            }
-            let mut found = false;
-            let mut index = 0;
-            let mut btns = btns.unwrap();
-            for (i, btn) in btns.iter().rev().enumerate() {
-                if let Ok(Some(val)) = btn.attr("data-testid").await {
-                    if val.contains("send-button") {
-                        found = true;
-                        index = i;
-                        break;
-                    }
-                }
-            }
-            if !found {
-                return false;
-            }
-            btn = Ok(btns.remove(index));
-        }
-        let btn = btn.unwrap();
+        let btn = get_send_btn(client).await;
         btn.is_enabled().await.unwrap_or(false)
             && btn.find(Locator::Css("svg > rect")).await.is_ok()
     }

@@ -137,10 +137,53 @@ fn decode_base64(encoded: &str) -> Result<String, base64::DecodeError> {
     Ok(decoded_string)
 }
 
-pub fn pause() -> String {
-    println!("Press Enter to continue...");
-    std::io::stdout().flush().unwrap(); // Ensure the message is displayed immediately
+pub fn pause_sync() -> String {
+    if let Ok(pause_var) = std::env::var("PAUSE") {
+        if pause_var == "1" {
+            println!("Press Enter to continue...");
+            std::io::stdout().flush().unwrap(); // Ensure the message is displayed immediately
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input).unwrap();
+            return input;
+        }
+    }
+    String::from("")
+}
+
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+pub async fn pause() -> String {
+    if let Ok(pause_var) = std::env::var("PAUSE") {
+        if pause_var == "1" {
+            let mut stdout = tokio::io::stdout();
+            stdout
+                .write_all(b"Press Enter to continue...\n")
+                .await
+                .unwrap();
+            stdout.flush().await.unwrap(); // Ensure the message is displayed immediately
+
+            let mut stdin = BufReader::new(tokio::io::stdin());
+            let mut input = String::new();
+            stdin.read_line(&mut input).await.unwrap();
+            return input;
+        } else if pause_var == "2" {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            return "continue".to_string();
+        }
+    }
+    String::from("")
+}
+
+pub async fn pause_force() -> String {
+    let mut stdout = tokio::io::stdout();
+    stdout
+        .write_all(b"Emergency!!! Press Enter to continue...\n")
+        .await
+        .unwrap();
+    stdout.flush().await.unwrap(); // Ensure the message is displayed immediately
+
+    let mut stdin = BufReader::new(tokio::io::stdin());
     let mut input = String::new();
-    std::io::stdin().read_line(&mut input).unwrap();
-    input
+    stdin.read_line(&mut input).await.unwrap();
+    return input;
 }

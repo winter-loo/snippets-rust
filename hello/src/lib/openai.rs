@@ -13,22 +13,22 @@ pub struct Conversation {
 #[derive(serde::Deserialize, Debug)]
 pub struct Message {
     pub id: String,
-    pub author: Author,
-    pub create_time: f64,
+    pub author: Option<Author>,
+    pub create_time: Option<f64>,
     pub update_time: Option<f64>,
     pub content: Content,
-    pub status: String,
+    pub status: Option<String>,
     pub end_turn: Option<bool>,
-    pub weight: f64,
-    pub metadata: Metadata,
-    pub recipient: String,
+    pub weight: Option<f64>,
+    pub metadata: Option<Metadata>,
+    pub recipient: Option<String>,
 }
 
 #[derive(serde::Deserialize, Debug)]
 pub struct Author {
-    pub role: String,
+    pub role: Option<String>,
     pub name: Option<String>,
-    pub metadata: HashMap<String, serde_json::Value>,
+    pub metadata: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(serde::Deserialize, Debug)]
@@ -39,14 +39,14 @@ pub struct Content {
 
 #[derive(serde::Deserialize, Debug)]
 pub struct Metadata {
-    pub citations: Vec<serde_json::Value>,
+    pub citations: Option<Vec<serde_json::Value>>,
     pub gizmo_id: Option<String>,
-    pub message_type: String,
-    pub model_slug: String,
-    pub default_model_slug: String,
+    pub message_type: Option<String>,
+    pub model_slug: Option<String>,
+    pub default_model_slug: Option<String>,
     pub pad: Option<String>,
-    pub parent_id: String,
-    pub model_switcher_deny: Vec<String>,
+    pub parent_id: Option<String>,
+    pub model_switcher_deny: Option<Vec<String>>,
 }
 
 pub fn assistant_sse(data: &str, outfn: impl Fn(&str, bool)) {
@@ -89,7 +89,7 @@ pub fn assistant_sse(data: &str, outfn: impl Fn(&str, bool)) {
 
         outfn(
             &cont_part[offset..],
-            con.message.status == "finished_successfully",
+            con.message.status.is_some() && con.message.status.unwrap() == "finished_successfully",
         );
     }
 }
