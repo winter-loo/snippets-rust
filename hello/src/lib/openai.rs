@@ -49,7 +49,7 @@ pub struct Metadata {
     pub model_switcher_deny: Option<Vec<String>>,
 }
 
-pub fn assistant_sse(data: &str, outfn: impl Fn(&str, bool)) {
+pub fn assistant_sse(data: &str, mut outfn: impl FnMut(&str, bool)) {
     static CONTENT_OFFSET: AtomicUsize = AtomicUsize::new(0);
     lazy_static! {
         static ref MESSAGE_ID: Mutex<String> = Mutex::new(String::from(""));

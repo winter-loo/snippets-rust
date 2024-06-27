@@ -2,7 +2,6 @@
 
 use fantoccini::{client::*, elements::*, ClientBuilder, Locator};
 use serde_json::json;
-use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio;
@@ -10,102 +9,6 @@ use tokio;
 use chati::comment_extractor::*;
 use chati::openai;
 use chati::util;
-
-#[tokio::main]
-async fn maintest() {
-    // let mut args: Vec<_> = std::env::args().collect();
-    // if args.len() != 2 {
-    //     panic!("usage: {} <c code file>", args[0]);
-    // }
-    // let infile = args.remove(1);
-    let infile = "remote_transaction.c";
-    let infile = std::fs::File::open(infile);
-    if let Err(error) = infile {
-        panic!("open file: {error:#?}");
-    }
-    let flag = Arc::new(AtomicBool::new(false));
-
-    let flag_tx = Arc::clone(&flag);
-
-    let user = tokio::task::spawn(async move {
-        // Open the file
-        let ce = CommentExtractor::new(infile.unwrap());
-
-        struct MyIter {
-            ce: CommentExtractor,
-            initial_prompt: String,
-            initial_prompt_sent: bool,
-        }
-
-        impl MyIter {
-            fn new(ce: CommentExtractor, initial_prompt: String) -> Self {
-                MyIter {
-                    ce,
-                    initial_prompt,
-                    initial_prompt_sent: false,
-                }
-            }
-        }
-
-        impl Iterator for MyIter {
-            type Item = Result<String, std::io::Error>;
-
-            fn next(&mut self) -> Option<Result<String, std::io::Error>> {
-                if self.initial_prompt_sent {
-                    return self.ce.next().map(|cc| Ok(cc.content));
-                }
-                self.initial_prompt_sent = true;
-                Some(Ok(self.initial_prompt.clone()))
-            }
-        }
-
-        let ip = "Translate the following C code comment into Chinese".to_string();
-        let mut chatgpt = ChatGPT::new(Box::new(MyIter::new(ce, ip).into_iter())).await;
-        if let Err(error) = chatgpt.startup(flag_tx).await {
-            println!("chatgpt.startup: {error:#?}");
-        }
-        chatgpt.close().await.unwrap();
-    });
-
-    let flag_rx = Arc::clone(&flag);
-
-    let assistant = tokio::task::spawn(async move {
-        loop {
-            if flag_rx.load(Ordering::Acquire) {
-                println!("Flag is set, task can proceed");
-                break;
-            } else {
-                println!("Flag is not set, checking again...");
-                // To prevent busy-waiting, you can sleep for a short duration
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            }
-        }
-        if let Err(error) = util::listen_webpage_stream_data(
-            9222,
-            "https://chatgpt.com/",
-            0,
-            "https://chatgpt.com/backend-anon/conversation",
-            |data| {
-                openai::assistant_sse(data, |stream_msg, ended| {
-                    print!("{}", stream_msg);
-                    if let Err(e) = std::io::stdout().flush() {
-                        eprintln!("Failed to flush stdout: {}", e);
-                    }
-                    if ended {
-                        println!();
-                    }
-                })
-            },
-        )
-        .await
-        {
-            println!("listen_webpage_stream_data: {error:#?}");
-        }
-    });
-
-    user.await.unwrap();
-    assistant.await.unwrap();
-}
 
 enum WebState {
     ChatReady,
@@ -173,7 +76,7 @@ impl ChatGPT {
 
     #[allow(unreachable_code)]
     pub async fn send_my_said(
-        &mut self,
+        &self,
         said: &str,
     ) -> Result<(), fantoccini::error::CmdError> {
         loop {

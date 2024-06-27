@@ -1,10 +1,9 @@
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 mod chatgpt;
 use chatgpt::ChatGPT;
-use futures::channel::mpsc;
-use futures::SinkExt;
+use tokio::sync::mpsc;
 
 pub struct Chati {
     gpt: ChatGPT,
@@ -15,7 +14,7 @@ pub struct Chati {
 impl Chati {
     pub async fn new() -> Self {
         let gpt = ChatGPT::new().await;
-        let (he_said_tx, he_said_rx) = mpsc::unbounded();
+        let (he_said_tx, he_said_rx) = mpsc::unbounded_channel();
         Chati {
             gpt,
             he_said_tx,
@@ -28,6 +27,7 @@ impl Chati {
         let flag_tx = Arc::clone(&flag);
         let flag_rx = Arc::clone(&flag);
         
+        let he_said_tx = self.he_said_tx.clone();
         tokio::task::spawn(async move {
             loop {
                 if flag_rx.load(Ordering::Acquire) {
@@ -40,6 +40,7 @@ impl Chati {
                 }
             }
 
+            let he_said_tx = he_said_tx.clone();
             if let Err(error) = chati::util::listen_webpage_stream_data(
                 9222,
                 "https://chatgpt.com/",
@@ -47,7 +48,14 @@ impl Chati {
                 "https://chatgpt.com/backend-anon/conversation",
                 |data| {
                     chati::openai::assistant_sse(data, |stream_msg, ended| {
-                        self.he_said_tx.send(stream_msg.to_string());
+                        let words = if ended {
+                            "".to_string()
+                        } else {
+                            stream_msg.to_string()
+                        };
+                        if let Err(error) = he_said_tx.send(words) {
+                            println!("send response data to inner channel: {error:#?}");
+                        }
                     })
                 },
             )
@@ -60,27 +68,28 @@ impl Chati {
         self.gpt.new_session(flag_tx).await;
     }
 
-    pub async fn isaid(&self, said: &str) -> String {
+    pub async fn isaid(&self, said: &str) {
         if let Err(error) = self.gpt.send_my_said(said).await {
             println!("chatgpt.startup: {error:#?}");
         }
-        while let Some(words) = self.he_said_rx.next().await {
-            return words;
+    }
+
+    pub async fn hesaid(&mut self) {
+        while let Some(words) = self.he_said_rx.recv().await {
+            print!("{words}");
         }
     }
 }
 
 #[tokio::main]
 async fn main() {
-    let ci = Chati:new().await;
+    let mut ci = Chati::new().await;
 
     let what_i_said = "hello world";
     println!("I SAID: {what_i_said}");
+    ci.isaid(what_i_said).await;
 
-    let hesaid = ci.isaid(what_i_said).await.into_stream();
     print!("HE SAID: ");
-    while let Some(words) = hesaid.next().await {
-        print!("{words}");
-    }
+    ci.hesaid().await;
     println!();
 }

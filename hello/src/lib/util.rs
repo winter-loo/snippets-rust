@@ -13,7 +13,7 @@ pub async fn listen_webpage_stream_data(
     page_url: &str,
     index: usize,
     request_url: &str,
-    handle_fn: impl Fn(&str),
+    mut handle_fn: impl FnMut(&str),
 ) -> Result<(), Box<dyn std::error::Error>> {
     let response_text = reqwest::get(format!("http://localhost:{browser_port}/json"))
         .await?
