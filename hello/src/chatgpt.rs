@@ -53,9 +53,7 @@ impl ChatGPT {
             .await
             .expect("connect to http://localhost:9515");
 
-        ChatGPT {
-            client,
-        }
+        ChatGPT { client }
     }
 
     pub async fn new_session(&self, session_opened: Arc<AtomicBool>) {
@@ -73,10 +71,7 @@ impl ChatGPT {
     }
 
     #[allow(unreachable_code)]
-    pub async fn send_my_said(
-        &self,
-        said: &str,
-    ) -> Result<(), fantoccini::error::CmdError> {
+    pub async fn send_my_said(&self, said: &str) -> Result<(), fantoccini::error::CmdError> {
         loop {
             println!("1. get_chatbox");
             let mut chatbox = self.get_chatbox(5).await;
@@ -100,16 +95,22 @@ impl ChatGPT {
             self.set_user_msg(said).await?;
 
             // wait until user the message could be sent to openai
+            #[allow(unused_assignments)]
+            let mut msg_sent = false;
             loop {
                 println!("4. send_user_msg");
                 if self.send_user_msg().await? {
                     println!("5. message sent..");
+                    msg_sent = true;
                     break;
                 } else {
                     println!("6. open_chatbox");
                     let _ = self.open_chatbox().await;
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                 }
+            }
+            if msg_sent {
+                break;
             }
 
             // take a break
@@ -282,7 +283,7 @@ impl ChatGPT {
             .await;
         if let Err(error) = elm {
             println!("get #prompt-textarea: {:#?}", error);
-            util::pause_force().await;
+            // util::pause_force().await;
             return None;
         }
         return elm.ok();

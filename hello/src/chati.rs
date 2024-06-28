@@ -2,9 +2,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+use crate::chatgpt::ChatGPT;
 use crate::openai;
 use crate::util;
-use crate::chatgpt::ChatGPT;
 
 pub struct Chati {
     gpt: ChatGPT,
@@ -29,7 +29,7 @@ impl Chati {
         let flag = Arc::new(AtomicBool::new(false));
         let flag_tx = Arc::clone(&flag);
         let flag_rx = Arc::clone(&flag);
-        
+
         let he_said_tx = self.he_said_tx.clone();
         tokio::task::spawn(async move {
             loop {
@@ -51,20 +51,21 @@ impl Chati {
                 "https://chatgpt.com/backend-anon/conversation",
                 |data| {
                     openai::assistant_sse(data, |stream_msg, ended| {
-                        let words = if ended {
-                            Self::WORDS_ENDED.to_string()
-                        } else {
-                            stream_msg.to_string()
-                        };
+                        let words = stream_msg.to_string();
                         if let Err(error) = he_said_tx.send(words) {
                             println!("send response data to inner channel: {error:#?}");
+                        }
+                        if ended {
+                            if let Err(error) = he_said_tx.send(Self::WORDS_ENDED.to_string()) {
+                                println!("send response data to inner channel: {error:#?}");
+                            }
                         }
                     })
                 },
             )
             .await
             {
-                println!("listen_webpage_stream_data: {error:#?}");
+                println!("error on listen_webpage_stream_data: {error:#?}");
             }
         });
 
@@ -77,12 +78,22 @@ impl Chati {
         }
     }
 
-    pub async fn hesaid(&mut self, out: impl Fn(&str)) {
+    pub async fn hesaid<F, Fut>(&mut self, mut out: F) 
+    where 
+        F: FnMut(String) -> Fut,
+        Fut: futures::Future<Output = ()>, 
+    {
         while let Some(words) = self.he_said_rx.recv().await {
             if words == Self::WORDS_ENDED {
                 break;
             }
-            out(&words);
+            out(words).await;
+        }
+    }
+
+    pub async fn end(self) {
+        if let Err(error) = self.gpt.close().await {
+            println!("chatgpt.close: {error:#?}");
         }
     }
 }

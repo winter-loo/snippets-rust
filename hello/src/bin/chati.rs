@@ -1,4 +1,4 @@
-use std::io::Write;
+use tokio::io::AsyncWriteExt;
 
 use chati::chati::Chati;
 
@@ -6,14 +6,25 @@ use chati::chati::Chati;
 async fn main() {
     let mut ci = Chati::new().await;
 
+    ci.new_converstation().await;
+
     let what_i_said = "hello world";
     println!("I SAID: {what_i_said}");
+    tokio::io::stdout().flush().await.unwrap();
+
     ci.isaid(what_i_said).await;
 
     print!("HE SAID: ");
-    ci.hesaid(|words| {
+    tokio::io::stdout().flush().await.unwrap();
+
+    ci.hesaid(|words| async move {
         print!("{words}");
-        let _ = std::io::stdout().flush();
-    }).await;
-    println!();
+        let _ = tokio::io::stdout().flush().await;
+    })
+    .await;
+
+    println!("\ndone");
+    tokio::io::stdout().flush().await.unwrap();
+
+    ci.end().await;
 }
