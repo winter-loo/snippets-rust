@@ -1,9 +1,10 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-
-mod chatgpt;
-use chatgpt::ChatGPT;
 use tokio::sync::mpsc;
+
+use crate::openai;
+use crate::util;
+use crate::chatgpt::ChatGPT;
 
 pub struct Chati {
     gpt: ChatGPT,
@@ -12,6 +13,8 @@ pub struct Chati {
 }
 
 impl Chati {
+    const WORDS_ENDED: &'static str = "\n\n\n\n\n\n";
+
     pub async fn new() -> Self {
         let gpt = ChatGPT::new().await;
         let (he_said_tx, he_said_rx) = mpsc::unbounded_channel();
@@ -41,15 +44,15 @@ impl Chati {
             }
 
             let he_said_tx = he_said_tx.clone();
-            if let Err(error) = chati::util::listen_webpage_stream_data(
+            if let Err(error) = util::listen_webpage_stream_data(
                 9222,
                 "https://chatgpt.com/",
                 0,
                 "https://chatgpt.com/backend-anon/conversation",
                 |data| {
-                    chati::openai::assistant_sse(data, |stream_msg, ended| {
+                    openai::assistant_sse(data, |stream_msg, ended| {
                         let words = if ended {
-                            "".to_string()
+                            Self::WORDS_ENDED.to_string()
                         } else {
                             stream_msg.to_string()
                         };
@@ -74,22 +77,12 @@ impl Chati {
         }
     }
 
-    pub async fn hesaid(&mut self) {
+    pub async fn hesaid(&mut self, out: impl Fn(&str)) {
         while let Some(words) = self.he_said_rx.recv().await {
-            print!("{words}");
+            if words == Self::WORDS_ENDED {
+                break;
+            }
+            out(&words);
         }
     }
-}
-
-#[tokio::main]
-async fn main() {
-    let mut ci = Chati::new().await;
-
-    let what_i_said = "hello world";
-    println!("I SAID: {what_i_said}");
-    ci.isaid(what_i_said).await;
-
-    print!("HE SAID: ");
-    ci.hesaid().await;
-    println!();
 }

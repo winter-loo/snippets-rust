@@ -1,7 +1,7 @@
 use std::io::Write;
 
-use hello::openai;
-use hello::util;
+use chati::openai;
+use chati::util;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

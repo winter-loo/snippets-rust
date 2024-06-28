@@ -6,9 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio;
 
-use chati::comment_extractor::*;
-use chati::openai;
-use chati::util;
+use crate::util;
 
 enum WebState {
     ChatReady,
