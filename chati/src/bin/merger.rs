@@ -48,7 +48,6 @@ fn main() {
         // com1.end is not inclusive
         out_offset = com1.end as u64;
 
-        println!("write merged: [{merged}]");
         merg_file
             .write_all(merged.as_bytes())
             .expect("write to {merg_filename}");

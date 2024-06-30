@@ -48,7 +48,7 @@ cargo r --bin chati
 It merges original code file with the translated comments generating from the bcct executable.
 
 ```shell
-cargo r --bin merger demo.c demo.txt demo.out
+cargo r --bin merger demo.c translated.txt demo.out
 ```
 
 ## TODO

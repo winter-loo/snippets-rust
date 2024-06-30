@@ -57,19 +57,16 @@ The final translation should preserve the structure and meaning of the original 
     }
 
     println!("DONE");
-    // ci.end().await;
+    ci.end().await;
 }
 
 async fn append_to_file(words: &str) {
-    if words.contains("Suppose you") {
-        chati::util::pause_force().await;
-    }
     let mut file = tokio::fs::OpenOptions::new()
         .append(true)
         .create(true)
-        .open("inv_api.txt")
+        .open("translated.txt")
         .await
-        .expect("append to inv_api.txt");
+        .expect("append to translated.txt");
     let _ = file.write_all(words.as_bytes()).await;
 }
 
