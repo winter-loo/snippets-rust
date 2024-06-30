@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use fantoccini::actions::{InputSource, MouseActions, PointerAction, MOUSE_BUTTON_LEFT};
 use fantoccini::{client::*, elements::*, ClientBuilder, Locator};
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,16 +15,23 @@ enum WebState {
     LoginTip,
     Tired,
     NeedReopen,
-    MsgSending(u64),
+    /// send button is spinning
+    MsgSending,
     Talking,
 }
 
 pub struct ChatGPT {
     client: Client,
+    /// when the page is stucking in sending user message, we need remember how long have we waited
+    /// for. If the wait time exceeds a limit, we need refresh page.
+    sending_sleep: u64,
+    // /// When we refresh the page, we need send these initial prompts to tell chatgpt what we want
+    // /// do. Responses(or assistant messages) will be discarded.
+    // initial_prompts: Vec<String>,
 }
 
 impl ChatGPT {
-    pub async fn new() -> Self {
+    pub async fn new(/* initial_prompts: Vec<String>*/) -> Self {
         // Define the Chrome capabilities
         let mut caps = serde_json::map::Map::new();
         caps.insert("goog:chromeOptions".to_string(),
@@ -36,7 +44,7 @@ impl ChatGPT {
                             "--disable-blink-features=AutomationControlled",
                             "--disable-features=InterestCohort",
                             "--disable-features=BrowsingTopics",
-                            // "--proxy-server=127.0.0.1:7890",
+                            "--proxy-server=127.0.0.1:7890",
                             // start a remote port for CDP protocol
                             "--remote-debugging-port=9222",
                             "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
@@ -53,10 +61,14 @@ impl ChatGPT {
             .await
             .expect("connect to http://localhost:9515");
 
-        ChatGPT { client }
+        ChatGPT {
+            client,
+            sending_sleep: 0,
+            // initial_prompts,
+        }
     }
 
-    pub async fn new_session(&self, session_opened: Arc<AtomicBool>) {
+    pub async fn new_session(&mut self, session_opened: Arc<AtomicBool>) {
         if let Err(error) = self.client.goto("https://chatgpt.com/").await {
             panic!("go to https://chatgpt.com: {error:#?}");
         }
@@ -70,8 +82,22 @@ impl ChatGPT {
         }
     }
 
+    pub async fn wait_for_chatbox(&self, session_opened: Arc<AtomicBool>) {
+        if let Err(error) = self.client.goto("https://chatgpt.com/").await {
+            panic!("go to https://chatgpt.com: {error:#?}");
+        }
+        session_opened.store(true, Ordering::Release);
+        loop {
+            if self.get_chatbox(1).await.is_some() {
+                break;
+            }
+            println!("waiting for chatbox available...");
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+    }
+
     #[allow(unreachable_code)]
-    pub async fn send_my_said(&self, said: &str) -> Result<(), fantoccini::error::CmdError> {
+    pub async fn send_my_said(&mut self, said: &str) {
         loop {
             println!("1. get_chatbox");
             let mut chatbox = self.get_chatbox(5).await;
@@ -89,24 +115,24 @@ impl ChatGPT {
             }
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-            println!("mymsg is\n{}", said);
-            println!("ready to send immediately...");
-            let _ = util::pause().await;
-            self.set_user_msg(said).await?;
-
             // wait until user the message could be sent to openai
             #[allow(unused_assignments)]
             let mut msg_sent = false;
+            // `set_user_msg` and `send_user_msg` bost must be in the same loop
             loop {
+                println!("ready to set user message immediately...");
+                let _ = util::pause().await;
+                self.set_user_msg(said).await;
+
                 println!("4. send_user_msg");
-                if self.send_user_msg().await? {
+                if self.send_user_msg().await {
                     println!("5. message sent..");
                     msg_sent = true;
                     break;
                 } else {
                     println!("6. open_chatbox");
                     let _ = self.open_chatbox().await;
-                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 }
             }
             if msg_sent {
@@ -116,10 +142,9 @@ impl ChatGPT {
             // take a break
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         }
-        Ok(())
     }
 
-    async fn set_user_msg(&self, msg: &str) -> Result<(), fantoccini::error::CmdError> {
+    async fn set_user_msg(&self, msg: &str) {
         let msg = msg.replace("\n", "\\n");
         let msg = msg.replace("\t", "\\t");
         let msg = msg.replace("'", "\\'");
@@ -136,38 +161,79 @@ impl ChatGPT {
         {
             println!("set_user_msg: {error:#?}");
         }
-        Ok(())
     }
 
-    async fn send_user_msg(&self) -> Result<bool, fantoccini::error::CmdError> {
+    async fn send_user_msg(&self) -> bool {
         // make #prompt-textarea active else the send button will still be disabled
         if let Some(chatbox) = self.get_chatbox(1).await {
-            if let Err(error) = chatbox.send_keys("\n").await {
+            if let Err(error) = chatbox.send_keys(" ").await {
                 println!("send_keys: {error:#?}");
-                util::pause_force().await;
-                return Ok(false);
+                // util::pause_force().await;
+                return false;
             }
         }
 
         // have to re-find the send button
-        let send_btn = get_send_btn(&self.client).await;
+        let send_btn = match get_send_btn(&self.client).await {
+            Some(send_btn) => send_btn,
+            None => return false,
+        };
+        if !send_btn.is_enabled().await.unwrap() {
+            return false;
+        }
 
         // println!("Are yre ready to click?");
         let _ = util::pause().await;
 
-        println!("send button: {:#?}", send_btn.html(false).await);
-        if let Err(error) = &send_btn.click().await {
-            println!("send-button click: {error:#?}");
-            Ok(false)
+        let mouse_click = MouseActions::new("click send button".to_string())
+            .then(PointerAction::MoveToElement {
+                element: send_btn,
+                duration: Some(std::time::Duration::from_millis(200)),
+                x: 1,
+                y: 1,
+            })
+            .then(PointerAction::Down {
+                button: MOUSE_BUTTON_LEFT,
+            })
+            .then(PointerAction::Up {
+                button: MOUSE_BUTTON_LEFT,
+            });
+        if let Err(error) = self.client.perform_actions(mouse_click).await {
+            println!("error on mouse click the send button: {error:#?}");
+            false
         } else {
-            // at this time, send_btn could be staled
-            println!("send button clicked");
-            Ok(true)
+            true
         }
     }
 
-    async fn open_chatbox(&self) -> Option<Element> {
-        match WebState::get(&self.client).await {
+    // TODO: refreshing a page means we need do more things.
+    // Such as,
+    //  * resend initial command prompts
+    async fn restart_session(&mut self, doit: bool) {
+        if doit {
+            if let Err(error) = self.client.refresh().await {
+                panic!("refresh page: {error:#?}");
+            }
+        }
+    }
+
+    async fn open_chatbox(&mut self) -> Option<Element> {
+        let webstate = WebState::get(&self.client).await;
+        match webstate {
+            WebState::MsgSending => {
+                println!("1.6 msg sending...");
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                self.sending_sleep += 1;
+                if self.sending_sleep > 10 {
+                    self.sending_sleep = 0;
+                    self.restart_session(false).await;
+                }
+            }
+            _ => {
+                self.sending_sleep = 0;
+            }
+        }
+        match webstate {
             WebState::LoggingIn => {
                 println!("1.1 logging in...");
                 self.bypass_cloudfare().await.ok()
@@ -178,8 +244,8 @@ impl ChatGPT {
                 self.get_chatbox(1).await
             }
             WebState::Tired => {
-                println!("1.3 tired...");
-                tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+                println!("1.3 tired, sleep 10 minutes...");
+                tokio::time::sleep(std::time::Duration::from_secs(600)).await;
                 self.get_chatbox(1).await
             }
             WebState::NeedReopen => {
@@ -187,9 +253,7 @@ impl ChatGPT {
                 let _ = WebState::reopen_chatbox(&self.client).await;
                 let cb = self.get_chatbox(1).await;
                 if cb.is_none() {
-                    if let Err(error) = self.client.refresh().await {
-                        println!("refresh page: {error:#?}");
-                    }
+                    self.restart_session(true).await;
                 }
                 cb
             }
@@ -197,19 +261,8 @@ impl ChatGPT {
                 println!("1.5 chat ready...");
                 self.get_chatbox(1).await
             }
-            WebState::MsgSending(ref mut n) => {
-                println!("1.6 msg sending...{}", *n);
-                if *n > 5 {
-                    if let Err(error) = self.client.refresh().await {
-                        println!("refresh page: {error:#?}");
-                    }
-                } else {
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                    *n = *n + 1;
-                }
-                self.get_chatbox(1).await
-            }
             WebState::Talking => self.get_chatbox(1).await,
+            _ => None,
         }
     }
 
@@ -283,6 +336,16 @@ impl ChatGPT {
             .await;
         if let Err(error) = elm {
             println!("get #prompt-textarea: {:#?}", error);
+            use fantoccini::error::CmdError;
+            match error {
+                CmdError::Lost(_) => {
+                    std::process::exit(0);
+                }
+                CmdError::NoSuchWindow(_) => {
+                    std::process::exit(0);
+                }
+                _ => {}
+            }
             // util::pause_force().await;
             return None;
         }
@@ -348,44 +411,38 @@ impl ChatGPT {
     }
 }
 
-async fn get_send_btn(client: &Client) -> Element {
-    loop {
-        let mut btn = client
-            .wait()
-            .at_most(std::time::Duration::from_secs(2))
-            .for_element(Locator::Css("button[data-testid=\"send-button\"]"))
-            .await;
+async fn get_send_btn(client: &Client) -> Option<Element> {
+    let mut btn = client
+        .wait()
+        .at_most(std::time::Duration::from_secs(2))
+        .for_element(Locator::Css("button[data-testid=\"send-button\"]"))
+        .await;
 
-        if btn.is_err() {
-            let _ = util::pause().await;
-
-            let btns = client.find_all(Locator::Css("button[data-testid]")).await;
-            if let Err(_) = btns {
-                println!("could not get any button[data-testid]...sleep a while...");
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                continue;
-            }
-            let mut found = false;
-            let mut index = 0;
-            let mut btns = btns.unwrap();
-            for (i, btn) in btns.iter().rev().enumerate() {
-                if let Ok(Some(val)) = btn.attr("data-testid").await {
-                    if val.contains("send-button") {
-                        found = true;
-                        index = i;
-                        break;
-                    }
+    if btn.is_err() {
+        let btns = client.find_all(Locator::Css("button[data-testid]")).await;
+        if let Err(_) = btns {
+            println!("could not get any button[data-testid]...sleep a while...");
+            return None;
+        }
+        let mut found = false;
+        let mut index = 0;
+        let mut btns = btns.unwrap();
+        for (i, btn) in btns.iter().rev().enumerate() {
+            if let Ok(Some(val)) = btn.attr("data-testid").await {
+                if val.contains("send-button") {
+                    found = true;
+                    index = i;
+                    break;
                 }
             }
-            if !found {
-                println!("could not get any button[data-testid=\"*send-button\"]");
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                continue;
-            }
-            btn = Ok(btns.remove(index));
         }
-        return btn.unwrap();
+        if !found {
+            println!("could not get any button[data-testid=\"*send-button\"]");
+            return None;
+        }
+        btn = Ok(btns.remove(btns.len() - 1 - index));
     }
+    return Some(btn.unwrap());
 }
 
 impl WebState {
@@ -399,18 +456,21 @@ impl WebState {
         } else if WebState::need_reopen(client).await {
             WebState::NeedReopen
         } else if WebState::is_msg_sending(client).await {
-            WebState::MsgSending(0)
+            WebState::MsgSending
         } else {
             WebState::ChatReady
         }
     }
 
     async fn is_msg_sending(client: &Client) -> bool {
-        let btn = client
-            .find(Locator::Css("button[data-testid=\"send-button\"]"))
-            .await
-            .unwrap();
-        !btn.is_enabled().await.unwrap() && btn.find(Locator::Css("svg.animate-spin")).await.is_ok()
+        let btn = get_send_btn(client).await;
+        match btn {
+            Some(btn) => {
+                !btn.is_enabled().await.unwrap()
+                    && btn.find(Locator::Css("svg.animate-spin")).await.is_ok()
+            }
+            None => false,
+        }
     }
 
     async fn is_login_tip(client: &Client) -> bool {
@@ -487,7 +547,12 @@ impl WebState {
 
     async fn is_talking(client: &Client) -> bool {
         let btn = get_send_btn(client).await;
-        btn.is_enabled().await.unwrap_or(false)
-            && btn.find(Locator::Css("svg > rect")).await.is_ok()
+        match btn {
+            Some(btn) => {
+                btn.is_enabled().await.unwrap_or(false)
+                    && btn.find(Locator::Css("svg > rect")).await.is_ok()
+            }
+            None => false,
+        }
     }
 }

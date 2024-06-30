@@ -10,8 +10,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "https://chatgpt.com/",
         0,
         "https://chatgpt.com/backend-anon/conversation",
-        |data| {
-            openai::assistant_sse(data, |stream_msg, ended| {
+        |data| match data {
+            Some(data) => openai::assistant_sse(data, |stream_msg, ended| {
                 print!("{}", stream_msg);
                 if let Err(e) = std::io::stdout().flush() {
                     eprintln!("Failed to flush stdout: {}", e);
@@ -19,7 +19,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if ended {
                     println!();
                 }
-            })
+            }),
+            None => {
+                println!("nothing said");
+            }
         },
     )
     .await?;

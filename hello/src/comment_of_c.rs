@@ -1,3 +1,5 @@
+/// The returned tuple (start, end) represents the byte range of the comment.
+/// The comment starts at position `start` and ends at position `end - 1`.
 pub fn find_first_c_comment(buffer: &[u8]) -> Option<(usize, usize)> {
     let mut v = find_c_comments_internal(buffer, true);
     if v.len() == 0 {

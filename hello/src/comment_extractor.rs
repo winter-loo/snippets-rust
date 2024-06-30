@@ -5,17 +5,26 @@ use std::io::{Read, Seek, SeekFrom};
 
 use crate::comment_of_c::*;
 
+/// A block of C code comment
+/// For example.
+/// ```c
+/// /*
+///  * this is a c code block comment
+///  */
+/// ```
 pub struct CommentOfC {
+    /// inclusive
     pub offset: usize,
+    /// exclusive
     pub end: usize,
+    /// include whitespaces before '/*'
     pub content: String,
-    pub pre_whitespaces: String,
 }
 
 impl Display for CommentOfC {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "comment <{}:{}> ---", self.offset, self.end)?;
-        write!(f, "{}{}", self.pre_whitespaces, self.content)
+        write!(f, "{}", self.content)
     }
 }
 
@@ -25,7 +34,6 @@ impl CommentOfC {
             offset: 0,
             end: 0,
             content: String::from(""),
-            pre_whitespaces: String::from(""),
         }
     }
 }

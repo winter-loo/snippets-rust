@@ -1,7 +1,7 @@
 // block code comment translator
 
-use chati::chati::Chati;
-use chati::comment_extractor::CommentExtractor;
+use chati::{chati::Chati, comment_extractor::CommentExtractor};
+use std::sync::{atomic::AtomicBool, atomic::Ordering, Arc};
 use tokio::io::AsyncWriteExt;
 
 fn main() {
@@ -12,14 +12,14 @@ fn main() {
     }
 
     let code_file = std::fs::File::open(&args[1]).unwrap();
-    tokio::runtime::Runtime::new().unwrap().block_on(block_code_comment_translator(code_file));
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(block_code_comment_translator(code_file));
 }
 
 async fn block_code_comment_translator(code_file: std::fs::File) {
-    let ce = CommentExtractor::new(code_file);
-
     let mut ci = Chati::new().await;
-    ci.new_converstation().await;
+    ci.new_converstation(false).await;
 
     let command = r#"Suppose you are a specialized code comment translator.
 Translate code comments I will provide to you coming from database project in following conversations into Chinese.
@@ -47,32 +47,69 @@ And do not translate the word/words below within a sentence:
   * colocation group
 
 The final translation should preserve the structure and meaning of the original comment in Chinese."#;
-    println!("I SAID: {command}");
-    tokio::io::stdout().flush().await.unwrap();
 
-    ci.isaid(command).await;
+    ensure_responded(&mut ci, &command, false).await;
 
-    print!("HE SAID: ");
-    tokio::io::stdout().flush().await.unwrap();
-
-    ci.hesaid(|words| async move {
-        print!("{words}");
-        let _ = tokio::io::stdout().flush().await;
-    })
-    .await;
-
-    println!();
-    tokio::io::stdout().flush().await.unwrap();
+    let ce = CommentExtractor::new(code_file);
 
     for com in ce {
-        ci.isaid(&com.content).await;
-
-        ci.hesaid(|words| async move {
-            print!("{words}");
-            let _ = tokio::io::stdout().flush().await;
-        })
-        .await;
+        ensure_responded(&mut ci, &com.content, true).await;
     }
 
-    ci.end().await;
+    println!("DONE");
+    // ci.end().await;
+}
+
+async fn append_to_file(words: &str) {
+    if words.contains("Suppose you") {
+        chati::util::pause_force().await;
+    }
+    let mut file = tokio::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open("inv_api.txt")
+        .await
+        .expect("append to inv_api.txt");
+    let _ = file.write_all(words.as_bytes()).await;
+}
+
+async fn ensure_responded(ci: &mut Chati, isaid: &str, remember_he_said: bool) {
+    loop {
+        chati::util::pause().await;
+        println!("I SAID: {isaid}");
+        tokio::io::stdout().flush().await.unwrap();
+
+        ci.isaid(isaid).await;
+
+        print!("HE SAID: ");
+        tokio::io::stdout().flush().await.unwrap();
+
+        let repeat = Arc::new(AtomicBool::new(false));
+        ci.hesaid(|words| {
+            let repeat = Arc::clone(&repeat);
+            async move {
+                match words {
+                    Some(words) => {
+                        // print!("{words}");
+                        // let _ = tokio::io::stdout().flush().await;
+                        if remember_he_said {
+                            append_to_file(&words).await;
+                        }
+                    }
+                    None => {
+                        println!("he said nothing. I will repeat my said");
+                        repeat.store(true, Ordering::Relaxed);
+                    }
+                }
+            }
+        })
+        .await;
+
+        if !repeat.load(Ordering::Relaxed) {
+            // println!();
+            // tokio::io::stdout().flush().await.unwrap();
+            append_to_file("\n").await;
+            break;
+        }
+    }
 }
