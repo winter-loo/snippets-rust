@@ -2,7 +2,7 @@
 
 A project that leverages chatgpt.com to automatically translate C code block comments in a file.
 
-## How is it working
+## How it works
 
 This project is composed of several components:
 
