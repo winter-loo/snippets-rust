@@ -45,7 +45,7 @@ cargo r --bin chati
 
 ### merger
 
-It merges original code file with the translated comments generating from [Chati](#chati).
+It merges original code file with the translated comments generating from the bcct executable.
 
 ```shell
 cargo r --bin merger demo.c demo.txt demo.out
@@ -54,6 +54,7 @@ cargo r --bin merger demo.c demo.txt demo.out
 ## TODO
 
 * handle large block of the C code comment
+
   test file: [nodeAgg.c](https://github.com/postgres/postgres/blob/db0c96cc18aec417101e37e59fcc53d4bf647915/src/backend/executor/nodeAgg.c)
 
 * continue to translate the remaining blocks when the webpage gets refreshed
