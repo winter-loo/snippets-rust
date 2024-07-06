@@ -4,6 +4,7 @@ use serde_json::json;
 use std::io::Write; // flush
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use log::{debug, info};
 
 /// Listen specific web page with `page_url` at the tab `index`
 /// Before we invoke the function, lauch Chrome program with
@@ -33,7 +34,7 @@ pub async fn listen_webpage_stream_data(
         }
     }
 
-    println!("connect to page {url}");
+    debug!("connect to page {url}");
     let (mut ws_stream, _) = connect_async(url).await?;
 
     // https://github.com/aslushnikov/getting-started-with-cdp/blob/master/README.md
@@ -49,7 +50,7 @@ pub async fn listen_webpage_stream_data(
     let mut stream_res_cont_cid = 0;
     let mut conversation_request_id = String::new();
 
-    println!("Listening for network events...");
+    debug!("Listening for network events...");
     while let Some(msg) = ws_stream.next().await {
         // println!("{msg:#?}");
         if let Ok(Message::Text(text)) = msg {
@@ -172,7 +173,7 @@ fn decode_base64(encoded: &str) -> Result<String, base64::DecodeError> {
 pub fn pause_sync() -> String {
     if let Ok(pause_var) = std::env::var("PAUSE") {
         if pause_var == "1" {
-            println!("Press Enter to continue...");
+            info!("Press Enter to continue...");
             std::io::stdout().flush().unwrap(); // Ensure the message is displayed immediately
             let mut input = String::new();
             std::io::stdin().read_line(&mut input).unwrap();

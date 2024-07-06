@@ -1,6 +1,7 @@
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use log::error;
 
 #[derive(serde::Deserialize, Debug)]
 pub struct Conversation {
@@ -72,7 +73,7 @@ pub fn assistant_sse(data: &str, mut outfn: impl FnMut(&str, bool)) {
             match serde_json::from_str::<Conversation>(line.trim_start_matches("data:").trim()) {
                 Ok(x) => Some(x),
                 Err(error) => {
-                    println!("when parsing json text as Conversation: {line} {error:#?}");
+                    error!("when parsing json text as Conversation: {line} {error:#?}");
                     None
                 }
             }

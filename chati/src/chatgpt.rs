@@ -6,6 +6,7 @@ use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio;
+use log::{debug, info, error};
 
 use crate::util;
 
@@ -32,27 +33,35 @@ pub struct ChatGPT {
 
 impl ChatGPT {
     pub async fn new(/* initial_prompts: Vec<String>*/) -> Self {
+        let mut proxy_server = std::env::var("http_proxy").unwrap_or("".to_string());
+        let mut args = json!({
+            "args": [
+                // "--headless",
+                // "--disable-gpu",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-features=InterestCohort",
+                "--disable-features=BrowsingTopics",
+                // start a remote port for CDP protocol
+                "--remote-debugging-port=9222",
+                "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+                "disable-infobars",
+            ],
+            "excludeSwitches": ["enable-automation"]
+        });
+        if !proxy_server.is_empty() {
+            if proxy_server.starts_with("http://") {
+                proxy_server = proxy_server[7..].to_string();
+            }
+            args["args"].as_array_mut().unwrap().push(json! {
+                format!("--proxy-server={}", proxy_server)
+            });
+        }
+        info!("args: {:#?}", args);
         // Define the Chrome capabilities
         let mut caps = serde_json::map::Map::new();
-        caps.insert("goog:chromeOptions".to_string(),
-                    json!({
-                        "args": [
-                            // "--headless",
-                            // "--disable-gpu",
-                            "--no-sandbox",
-                            "--disable-dev-shm-usage",
-                            "--disable-blink-features=AutomationControlled",
-                            "--disable-features=InterestCohort",
-                            "--disable-features=BrowsingTopics",
-                            "--proxy-server=127.0.0.1:7890",
-                            // start a remote port for CDP protocol
-                            "--remote-debugging-port=9222",
-                            "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-                            "disable-infobars",
-                        ],
-                        "excludeSwitches": ["enable-automation"]
-                    })
-        );
+        caps.insert("goog:chromeOptions".to_string(), args);
 
         // start chromedriver at port 9515 before launching this program
         let client = ClientBuilder::native()
@@ -74,7 +83,7 @@ impl ChatGPT {
         }
         session_opened.store(true, Ordering::Release);
         loop {
-            println!("try to login in...");
+            debug!("try to login in...");
             if self.get_chatbox(5).await.is_none() && self.open_chatbox().await.is_none() {
                 continue;
             }
@@ -91,7 +100,7 @@ impl ChatGPT {
             if self.get_chatbox(1).await.is_some() {
                 break;
             }
-            println!("waiting for chatbox available...");
+            debug!("waiting for chatbox available...");
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
     }
@@ -99,11 +108,11 @@ impl ChatGPT {
     #[allow(unreachable_code)]
     pub async fn send_my_said(&mut self, said: &str) {
         loop {
-            println!("1. get_chatbox");
+            debug!("1. get_chatbox");
             let mut chatbox = self.get_chatbox(5).await;
             if chatbox.is_none() {
                 // util::pause();
-                println!("2. open_chatbox");
+                debug!("2. open_chatbox");
                 chatbox = self.open_chatbox().await;
                 if chatbox.is_none() {
                     continue;
@@ -120,17 +129,17 @@ impl ChatGPT {
             let mut msg_sent = false;
             // `set_user_msg` and `send_user_msg` bost must be in the same loop
             loop {
-                println!("ready to set user message immediately...");
+                debug!("ready to set user message immediately...");
                 let _ = util::pause().await;
                 self.set_user_msg(said).await;
 
-                println!("4. send_user_msg");
+                debug!("4. send_user_msg");
                 if self.send_user_msg().await {
-                    println!("5. message sent..");
+                    debug!("5. message sent..");
                     msg_sent = true;
                     break;
                 } else {
-                    println!("6. open_chatbox");
+                    debug!("6. open_chatbox");
                     let _ = self.open_chatbox().await;
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 }
@@ -159,7 +168,7 @@ impl ChatGPT {
             )
             .await
         {
-            println!("set_user_msg: {error:#?}");
+            debug!("set_user_msg: {error:#?}");
         }
     }
 
@@ -167,7 +176,7 @@ impl ChatGPT {
         // make #prompt-textarea active else the send button will still be disabled
         if let Some(chatbox) = self.get_chatbox(1).await {
             if let Err(error) = chatbox.send_keys(" ").await {
-                println!("send_keys: {error:#?}");
+                error!("send_keys: {error:#?}");
                 // util::pause_force().await;
                 return false;
             }
@@ -199,7 +208,7 @@ impl ChatGPT {
                 button: MOUSE_BUTTON_LEFT,
             });
         if let Err(error) = self.client.perform_actions(mouse_click).await {
-            println!("error on mouse click the send button: {error:#?}");
+            error!("error on mouse click the send button: {error:#?}");
             false
         } else {
             true
@@ -221,7 +230,7 @@ impl ChatGPT {
         let webstate = WebState::get(&self.client).await;
         match webstate {
             WebState::MsgSending => {
-                println!("1.6 msg sending...");
+                debug!("1.6 msg sending...");
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 self.sending_sleep += 1;
                 if self.sending_sleep > 10 {
@@ -235,21 +244,21 @@ impl ChatGPT {
         }
         match webstate {
             WebState::LoggingIn => {
-                println!("1.1 logging in...");
+                debug!("1.1 logging in...");
                 self.bypass_cloudfare().await.ok()
             }
             WebState::LoginTip => {
-                println!("1.2 logging tip...");
+                debug!("1.2 logging tip...");
                 let _ = WebState::close_login_tip(&self.client).await;
                 self.get_chatbox(1).await
             }
             WebState::Tired => {
-                println!("1.3 tired, sleep 10 minutes...");
+                debug!("1.3 tired, sleep 10 minutes...");
                 tokio::time::sleep(std::time::Duration::from_secs(600)).await;
                 self.get_chatbox(1).await
             }
             WebState::NeedReopen => {
-                println!("1.4 reopen...");
+                debug!("1.4 reopen...");
                 let _ = WebState::reopen_chatbox(&self.client).await;
                 let cb = self.get_chatbox(1).await;
                 if cb.is_none() {
@@ -258,7 +267,7 @@ impl ChatGPT {
                 cb
             }
             WebState::ChatReady => {
-                println!("1.5 chat ready...");
+                debug!("1.5 chat ready...");
                 self.get_chatbox(1).await
             }
             WebState::Talking => self.get_chatbox(1).await,
@@ -306,11 +315,11 @@ impl ChatGPT {
             .for_element(checkbox_loc)
             .await;
         if let Err(error) = rst {
-            println!("input checkbox: {error:#?}");
+            error!("input checkbox: {error:#?}");
             return Ok(());
         }
         let checkbox = rst.unwrap();
-        println!("checkbox found");
+        debug!("checkbox found");
         let button: Element;
         let mut path = "./..".to_string();
         loop {
@@ -320,7 +329,7 @@ impl ChatGPT {
                 button = checkbox;
                 break;
             }
-            println!("up: {:#?}", checkbox.tag_name().await?);
+            debug!("up: {:#?}", checkbox.tag_name().await?);
             path.push_str("/..");
             // tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
@@ -335,7 +344,7 @@ impl ChatGPT {
             .for_element(Locator::Css("#prompt-textarea"))
             .await;
         if let Err(error) = elm {
-            println!("get #prompt-textarea: {:#?}", error);
+            error!("get #prompt-textarea: {:#?}", error);
             use fantoccini::error::CmdError;
             match error {
                 CmdError::Lost(_) => {
@@ -355,7 +364,7 @@ impl ChatGPT {
     // Idea from https://github.com/ultrafunkamsterdam/undetected-chromedriver/issues/73#issuecomment-748487642
     #[allow(unreachable_code)]
     async fn bypass_cloudfare(&self) -> Result<Element, fantoccini::error::CmdError> {
-        println!("Try to bypass cloudfare...");
+        debug!("Try to bypass cloudfare...");
 
         self.humankind_identify().await?;
         let checkbox = self.get_chatbox(1).await;
@@ -369,13 +378,13 @@ impl ChatGPT {
 
         let checkbox = self.get_chatbox(1).await;
         if checkbox.is_none() {
-            println!("Oooops! You need login manually to chatgpt.com");
+            info!("Oooops! You need login manually to chatgpt.com");
             client
                 .switch_to_window(client.windows().await?.remove(0))
                 .await?;
         }
         loop {
-            println!("Try to click the 'Try ChatGPT' button!");
+            info!("Try to click the 'Try ChatGPT' button!");
             if client.windows().await?.len() > 2 {
                 client
                     .switch_to_window(client.windows().await?.remove(2))
@@ -398,9 +407,9 @@ impl ChatGPT {
                 break;
             }
             n += 1;
-            println!("wait for user login...{n}");
+            info!("wait for user login...{n}");
         }
-        println!("You just logged in! Have Fun!");
+        info!("You just logged in! Have Fun!");
 
         Ok(self.get_chatbox(1).await.unwrap())
     }
@@ -421,7 +430,7 @@ async fn get_send_btn(client: &Client) -> Option<Element> {
     if btn.is_err() {
         let btns = client.find_all(Locator::Css("button[data-testid]")).await;
         if let Err(_) = btns {
-            println!("could not get any button[data-testid]...sleep a while...");
+            error!("could not get any button[data-testid]...sleep a while...");
             return None;
         }
         let mut found = false;
@@ -437,7 +446,7 @@ async fn get_send_btn(client: &Client) -> Option<Element> {
             }
         }
         if !found {
-            println!("could not get any button[data-testid=\"*send-button\"]");
+            error!("could not get any button[data-testid=\"*send-button\"]");
             return None;
         }
         btn = Ok(btns.remove(btns.len() - 1 - index));

@@ -1,36 +1,47 @@
 use chati::chati::Chati;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
+use env_logger;
+use log::{debug, info};
+use std::io::Write;
 
 #[tokio::main]
 async fn main() {
+    env_logger::init();
+
     let mut ci = Chati::new().await;
 
     ci.new_converstation(true).await;
 
-    let mut i_said = "hello";
-    ensure_responded(&mut ci, &i_said).await;
+    loop {
+        print!(">>> ");
+        std::io::stdout().flush().unwrap();
 
-    i_said = "are you ok?";
-    ensure_responded(&mut ci, &i_said).await;
+        let mut i_said = String::new();
+        std::io::stdin().read_line(&mut i_said).unwrap();
 
-    println!("\ndone");
-    tokio::io::stdout().flush().await.unwrap();
+        if i_said.trim() == "\\q" {
+            break;
+        }
+        if i_said.trim() == "" {
+            continue;
+        }
+        ensure_responded(&mut ci, &i_said).await;
+    }
+
+    println!("\nbye!");
 
     ci.end().await;
 }
 
 async fn ensure_responded(ci: &mut Chati, isaid: &str) {
     loop {
-        chati::util::pause_force().await;
-        println!("I SAID: {isaid}");
-        tokio::io::stdout().flush().await.unwrap();
+        // chati::util::pause_force().await;
+        debug!("I SAID: {isaid}");
 
         ci.isaid(isaid).await;
 
-        print!("HE SAID: ");
-        tokio::io::stdout().flush().await.unwrap();
+        debug!("HE SAID: ");
 
         let repeat = Arc::new(AtomicBool::new(false));
         ci.hesaid(|words| {
@@ -39,10 +50,10 @@ async fn ensure_responded(ci: &mut Chati, isaid: &str) {
                 match words {
                     Some(words) => {
                         print!("{words}");
-                        let _ = tokio::io::stdout().flush().await;
+                        std::io::stdout().flush().unwrap();
                     }
                     None => {
-                        println!("he said nothing. I will repeat my said");
+                        info!("he said nothing. I will repeat my said");
                         repeat.store(true, Ordering::Relaxed);
                     }
                 }
@@ -52,7 +63,7 @@ async fn ensure_responded(ci: &mut Chati, isaid: &str) {
 
         if !repeat.load(Ordering::Relaxed) {
             println!();
-            tokio::io::stdout().flush().await.unwrap();
+            std::io::stdout().flush().unwrap();
             break;
         }
     }

@@ -6,6 +6,8 @@ use crate::chatgpt::ChatGPT;
 use crate::openai;
 use crate::util;
 
+use log::{debug, error};
+
 pub struct Chati {
     gpt: ChatGPT,
     // he could say nothing
@@ -35,10 +37,10 @@ impl Chati {
         tokio::task::spawn(async move {
             loop {
                 if flag_rx.load(Ordering::Acquire) {
-                    println!("Flag is set, task can proceed");
+                    debug!("Flag is set, task can proceed");
                     break;
                 } else {
-                    println!("Flag is not set, checking again...");
+                    debug!("Flag is not set, checking again...");
                     // To prevent busy-waiting, you can sleep for a short duration
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
@@ -63,13 +65,13 @@ impl Chati {
                         openai::assistant_sse(data, |stream_msg, ended| {
                             let words = stream_msg.to_string();
                             if let Err(error) = he_said_tx.send(Some(words)) {
-                                println!("send response data to inner channel: {error:#?}");
+                                error!("send response data to inner channel: {error:#?}");
                             }
                             if ended {
                                 if let Err(error) =
                                     he_said_tx.send(Some(Self::WORDS_ENDED.to_string()))
                                 {
-                                    println!("send response data to inner channel: {error:#?}");
+                                    error!("send response data to inner channel: {error:#?}");
                                 }
                             }
                         });
@@ -78,7 +80,7 @@ impl Chati {
                         if !has_said_none {
                             has_said_none = true;
                             if let Err(error) = he_said_tx.send(None) {
-                                println!("send response data to inner channel: {error:#?}");
+                                error!("send response data to inner channel: {error:#?}");
                             }
                         }
                     }
@@ -86,7 +88,7 @@ impl Chati {
             )
             .await
             {
-                println!("error on listen_webpage_stream_data: {error:#?}");
+                error!("error on listen_webpage_stream_data: {error:#?}");
             }
         });
 
@@ -125,7 +127,7 @@ impl Chati {
 
     pub async fn end(self) {
         if let Err(error) = self.gpt.close().await {
-            println!("chatgpt.close: {error:#?}");
+            error!("chatgpt.close: {error:#?}");
         }
     }
 }
