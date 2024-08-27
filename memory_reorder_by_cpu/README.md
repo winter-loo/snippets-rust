@@ -2,8 +2,16 @@
 
 run with release build
 
+* detect memory reorder
+
 ```
 cargo r --release
+```
+
+* disable memory reorder
+
+```
+cargo r --release --features mfence
 ```
 
 # reference

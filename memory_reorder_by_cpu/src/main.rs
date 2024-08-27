@@ -1,7 +1,7 @@
 // ideas from https://preshing.com/20120515/memory-reordering-caught-in-the-act/
 use std::thread;
 use std::sync::mpsc;
-use std::sync::atomic::{compiler_fence, Ordering};
+use std::sync::atomic::{compiler_fence, fence, Ordering};
 use rand::Rng;
 
 static mut X: u64 = 0;
@@ -18,7 +18,12 @@ fn worker1(rx: mpsc::Receiver<u8>, tx: mpsc::Sender<u8>) {
         while rng.gen_range(0..usize::MAX) % 8 != 0 {}
 
         unsafe { X = 1; }
+
+        #[cfg(not(feature = "mfence"))]
         compiler_fence(Ordering::SeqCst);
+        #[cfg(feature = "mfence")]
+        fence(Ordering::SeqCst);
+
         unsafe { R1 = Y; }
 
         let _ = tx.send(1);
@@ -34,7 +39,12 @@ fn worker2(rx: mpsc::Receiver<u8>, tx: mpsc::Sender<u8>) {
         while rng.gen_range(0..usize::MAX) % 8 != 0 {}
 
         unsafe { Y = 1; }
+
+        #[cfg(not(mfence))]
         compiler_fence(Ordering::SeqCst);
+        #[cfg(mfence)]
+        fence(Ordering::SeqCst);
+
         unsafe { R2 = X; }
 
         let _ = tx.send(1);
