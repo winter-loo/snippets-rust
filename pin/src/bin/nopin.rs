@@ -34,7 +34,7 @@ fn debug_memory(f1: &Foo, f2: &Foo) {
     println!("f1 addr: {:p}", &f1);
     println!("f1: {:#?}", f1);
     println!("f2 addr: {:p}", &f2);
-    println!("f1: {:#?}", f2);
+    println!("f2: {:#?}", f2);
     println!("f1.a.b: {}, f1.b: {}", f1.get_b_from_a(), f1.b);
     println!("f2.a.b: {}, f2.b: {}", f2.get_b_from_a(), f2.b);
 }
