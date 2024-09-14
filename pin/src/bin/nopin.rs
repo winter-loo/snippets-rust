@@ -27,7 +27,7 @@ impl Foo {
 
 fn handle_foo(f1: &mut Foo, f2: &mut Foo) {
     f1.a = f2.a;
-    std::mem::swap(f1, f2);
+    // std::mem::swap(f1, f2);
 }
 
 fn debug_memory(f1: &Foo, f2: &Foo) {

@@ -33,7 +33,7 @@ impl Foo {
 fn handle_foo(f1: &mut Pin<&mut Foo>, f2: &mut Pin<&mut Foo>) {
     let f1 = f1.as_mut().get_mut();
     f1.a = f2.a;
-    // std::mem::swap(&mut f1, &mut f2);
+    // std::mem::swap(f1, f2);
 }
 
 fn debug_memory(f1: &Foo, f2: &Foo) {
