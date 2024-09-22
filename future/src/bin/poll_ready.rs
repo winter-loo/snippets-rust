@@ -17,6 +17,7 @@ impl Future for Empty {
 async fn main() {
     let fut = Empty {};
     println!("awaiting fut...");
+    // An await in an async function typically results in a poll call on the future.
     fut.await;
     println!("awaiting fut...DONE");
 }
