@@ -20,5 +20,5 @@ but its output format is not friendly for other tools.
 ## static linking
 
 ```shell
-RUSTFALGS="-C target-feature=+crt-static" cargo build --release
+RUSTFLAGS="-C target-feature=+crt-static" cargo build --release
 ```

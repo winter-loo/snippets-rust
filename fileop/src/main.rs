@@ -25,13 +25,17 @@ fn main() {
             let parts: Vec<_> = s.split(":").collect();
             let line = parts[2];
             let new_line = if line.contains("*") { // pointer
-                line.replace(";", " = NULL;")
+                Some(line.replace(";", " = NULL;"))
             } else if line.contains("[") { // array
-                line.replace(";", " = {};")
+                Some(line.replace(";", " = {};"))
             } else { // others
                 let key = line.split_whitespace().collect::<Vec<_>>()[0];
-                let value = format!(" = {};", types_default.get(&key).unwrap());
-                line.replace(";", &value)
+                if let Some(value) = types_default.get(&key) {
+                    let value = format!(" = {};", value);
+                    Some(line.replace(";", &value))
+                } else {
+                    None
+                }
             };
             (parts[0], (parts[1].parse::<usize>().unwrap(), new_line))
         })
@@ -48,7 +52,7 @@ fn main() {
     });
 }
 
-fn update_file(filename: &str, updates: &Vec<(usize, String)>) {
+fn update_file(filename: &str, updates: &Vec<(usize, Option<String>)>) {
     let file_content = std::fs::read_to_string(filename).expect(&format!("file {filename}"));
     // println!("{filename} -> {file_content:#?}");
 
@@ -67,8 +71,10 @@ fn update_file(filename: &str, updates: &Vec<(usize, String)>) {
     updates.iter().for_each(|(linu, new_line)| {
         file_content.entry(*linu).and_modify(|s| {
             if !s.contains("=") {
-                *s = new_line;
-                changed = true;
+                if let Some(new_line) = new_line {
+                    *s = new_line;
+                    changed = true;
+                }
             }
         });
     });
