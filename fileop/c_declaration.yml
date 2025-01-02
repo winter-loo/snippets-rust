@@ -1,0 +1,5 @@
+id: c-declaration
+language: c
+rule:
+  pattern: "$A $B;"
+  regex: "\\w+(\\*)*\\s+(\\*)*\\w+(\\[.*)*;"

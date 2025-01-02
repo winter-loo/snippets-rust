@@ -1,0 +1,6 @@
+data/foo.c:1: int a;
+data/foo.c:2:   bool b;
+data/foo.c:8: char* d[2]; /* pointer + array */
+data/bar.c:1: int a;
+data/bar.c:3:    bool c[2];
+data/bar.c:4: char* d[2]; /* pointer + array */
