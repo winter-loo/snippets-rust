@@ -24,11 +24,14 @@ fn main() {
         .map(|s| {
             let parts: Vec<_> = s.split(":").collect();
             let line = parts[2];
-            let new_line = if line.contains("*") { // pointer
+            let new_line = if line.contains("*") {
+                // pointer
                 Some(line.replace(";", " = NULL;"))
-            } else if line.contains("[") { // array
+            } else if line.contains("[") {
+                // array
                 Some(line.replace(";", " = {};"))
-            } else { // others
+            } else {
+                // others
                 let key = line.split_whitespace().collect::<Vec<_>>()[0];
                 if let Some(value) = types_default.get(&key) {
                     let value = format!(" = {};", value);
@@ -56,13 +59,10 @@ fn update_file(filename: &str, updates: &Vec<(usize, Option<String>)>) {
     let file_content = std::fs::read_to_string(filename).expect(&format!("file {filename}"));
     // println!("{filename} -> {file_content:#?}");
 
-    let mut i = 0;
     let mut file_content: BTreeMap<_, _> = file_content
         .split('\n')
-        .map(|s| {
-            i = i + 1;
-            (i, s)
-        })
+        .enumerate()
+        .map(|(idx, s)| (idx + 1, s))
         .collect();
 
     // println!("{file_content:#?}");
