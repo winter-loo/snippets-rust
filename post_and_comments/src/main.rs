@@ -1,4 +1,6 @@
 #![allow(unused)]
+// References:
+// https://rust-leipzig.github.io/architecture/2016/12/20/idiomatic-trees-in-rust/
 
 use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
