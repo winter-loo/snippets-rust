@@ -1,173 +1,264 @@
 fn main() {
-    let mut f = Forth::new();
-    assert!(f.eval(": foo 5 ;").is_ok());
-    assert!(f.eval(": bar foo ;").is_ok());
-    assert!(f.eval(": foo 6 ;").is_ok());
-    assert!(f.eval("bar foo").is_ok());
-    assert_eq!(f.stack(), [5, 6]);
-
-    let mut f = Forth::new();
-    assert!(f.eval(": foo 10 ;").is_ok());
-    assert!(f.eval(": foo foo 1 + ;").is_ok());
-    assert!(f.eval(": foo foo 1 + ;").is_ok());
-    assert!(f.eval("foo").is_ok());
-
-    let mut f = Forth::new();
-    f.eval(": a 0 drop ;").unwrap();
-    f.eval(": b a a ;").unwrap();
-    f.eval(": c b b ;").unwrap();
-    f.eval(": d c c ;").unwrap();
-    f.eval(": e d d ;").unwrap();
-
-    assert!(f.stack().is_empty());
+    FONTS.iter().for_each(|font| {
+        let v: Vec<_> = font.1.iter().map(|v| std::string::String::from_utf8(v.to_vec()).unwrap()).collect();
+        let v = v.join("\n");
+        println!("{v}");
+    });
 }
 
-use std::collections::{HashMap, VecDeque};
-
-pub type Value = i32;
-pub type Result = std::result::Result<(), Error>;
-
-pub struct Forth {
-    defs: HashMap<String, String>,
-    stack: Vec<Value>,
+mod tests {
+    use super::*;
+    #[test]
+    fn input_with_lines_not_multiple_of_four_is_error() {
+        #[rustfmt::skip]
+    let input = " _ \n".to_string() +
+                "| |\n" +
+                "   ";
+        assert_eq!(Err(Error::InvalidRowCount(3)), convert(&input));
+    }
+    #[test]
+    fn input_with_columns_not_multiple_of_three_is_error() {
+        #[rustfmt::skip]
+    let input = "    \n".to_string() +
+                "   |\n" +
+                "   |\n" +
+                "    ";
+        assert_eq!(Err(Error::InvalidColumnCount(4)), convert(&input));
+    }
+    #[test]
+    fn unrecognized_characters_return_question_mark() {
+        #[rustfmt::skip]
+    let input = "   \n".to_string() +
+                "  _\n" +
+                "  |\n" +
+                "   ";
+        assert_eq!(Ok("?".to_string()), convert(&input));
+    }
+    #[test]
+    fn recognizes_0() {
+        #[rustfmt::skip]
+    let input = " _ \n".to_string() +
+                "| |\n" +
+                "|_|\n" +
+                "   ";
+        assert_eq!(Ok("0".to_string()), convert(&input));
+    }
+    #[test]
+    fn recognizes_1() {
+        #[rustfmt::skip]
+    let input = "   \n".to_string() +
+                "  |\n" +
+                "  |\n" +
+                "   ";
+        assert_eq!(Ok("1".to_string()), convert(&input));
+    }
+    #[test]
+    fn recognizes_2() {
+        #[rustfmt::skip]
+    let input = " _ \n".to_string() +
+                " _|\n" +
+                "|_ \n" +
+                "   ";
+        assert_eq!(Ok("2".to_string()), convert(&input));
+    }
+    #[test]
+    fn recognizes_3() {
+        #[rustfmt::skip]
+    let input = " _ \n".to_string() +
+                " _|\n" +
+                " _|\n" +
+                "   ";
+        assert_eq!(Ok("3".to_string()), convert(&input));
+    }
+    #[test]
+    fn recognizes_4() {
+        #[rustfmt::skip]
+    let input = "   \n".to_string() +
+                "|_|\n" +
+                "  |\n" +
+                "   ";
+        assert_eq!(Ok("4".to_string()), convert(&input));
+    }
+    #[test]
+    fn recognizes_5() {
+        #[rustfmt::skip]
+    let input = " _ \n".to_string() +
+                "|_ \n" +
+                " _|\n" +
+                "   ";
+        assert_eq!(Ok("5".to_string()), convert(&input));
+    }
+    #[test]
+    fn recognizes_6() {
+        #[rustfmt::skip]
+    let input = " _ \n".to_string() +
+                "|_ \n" +
+                "|_|\n" +
+                "   ";
+        assert_eq!(Ok("6".to_string()), convert(&input));
+    }
+    #[test]
+    fn recognizes_7() {
+        #[rustfmt::skip]
+    let input = " _ \n".to_string() +
+                "  |\n" +
+                "  |\n" +
+                "   ";
+        assert_eq!(Ok("7".to_string()), convert(&input));
+    }
+    #[test]
+    fn recognizes_8() {
+        #[rustfmt::skip]
+    let input = " _ \n".to_string() +
+                "|_|\n" +
+                "|_|\n" +
+                "   ";
+        assert_eq!(Ok("8".to_string()), convert(&input));
+    }
+    #[test]
+    fn recognizes_9() {
+        #[rustfmt::skip]
+    let input = " _ \n".to_string() +
+                "|_|\n" +
+                " _|\n" +
+                "   ";
+        assert_eq!(Ok("9".to_string()), convert(&input));
+    }
 }
 
-struct Def {
-    name: String,
-    namespace: HashMap<String, u32>,
-    value: String,
-}
+// The code below is a stub. Just enough to satisfy the compiler.
+// In order to pass the tests you can add-to or change any of this code.
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
-    DivisionByZero,
-    StackUnderflow,
-    UnknownWord,
-    InvalidWord,
+    InvalidRowCount(usize),
+    InvalidColumnCount(usize),
 }
 
-impl Forth {
-    pub fn new() -> Forth {
-        Forth {
-            defs: HashMap::new(),
-            stack: vec![],
+//    _  _
+//   | _| _|
+//   ||_  _|
+// 
+//     _  _
+// |_||_ |_
+//   | _||_|
+// 
+//  _  _  _
+//   ||_||_|
+//   ||_| _|
+// 
+pub fn convert(input: &str) -> Result<String, Error> {
+    // let matrix: Vec<_> = input
+    //     .lines()
+    //     .map(|line| line.bytes().collect::<Vec<_>>())
+    //     .collect();
+    let mut matrix = vec![vec![]; 4];
+    for (i, line) in input.lines().enumerate() {
+        let bytes: Vec<_> = line.bytes().collect();
+        let chunks: Vec<_> = bytes.chunks(3).collect();
+        if chunks.last().is_some_and(|c| c.len() != 3) {
+            return Err(Error::InvalidColumnCount(2));
         }
+
+        matrix[i].push(chunks);
     }
 
-    pub fn stack(&self) -> &[Value] {
-        &self.stack
+    if matrix.len() != 4 {
+        return Err(Error::InvalidRowCount(matrix.len()));
     }
-
-    fn get_number(&mut self) -> std::result::Result<Value, Error> {
-        match self.stack.pop() {
-            None => Err(Error::StackUnderflow),
-            Some(x) => Ok(x),
-        }
+    if !matrix.iter().all(|v| v.len() == 3) {
+        let line = matrix.iter().skip_while(|v| v.len() == 3).next().unwrap();
+        return Err(Error::InvalidColumnCount(line.len()));
     }
-
-    fn rewrite_def(&self, def: &Vec<String>) -> String {
-        let mut newdef = Vec::with_capacity(def.len());
-        for token in def {
-            if let Some(odef) = self.defs.get(token) {
-                newdef.push(odef.to_string());
-            } else {
-                newdef.push(token.to_string());
-            }
-        }
-        newdef.join(" ")
-    }
-
-    // 1 2 +
-    pub fn eval(&mut self, input: &str) -> Result {
-        let mut expr: VecDeque<String> = input.split(' ').map(|s| s.to_ascii_lowercase()).collect();
-        // : FOO 1 2 3 ;
-        if let Some(first) = expr.front() {
-            if first == ":" {
-                if expr.len() < 4 {
-                    return Err(Error::InvalidWord);
-                }
-                if let Some(last) = expr.back() {
-                    if last != ";" {
-                        return Err(Error::InvalidWord);
-                    }
-                    expr.pop_back();
-                    expr.pop_front();
-                    let identifier = expr[0].to_string().to_ascii_lowercase();
-                    if identifier.parse::<Value>().is_ok() {
-                        return Err(Error::InvalidWord);
-                    }
-                    expr.pop_front();
-                    let def = expr.into_iter().collect::<Vec<_>>();
-                    let def = self.rewrite_def(&def);
-                    self.defs.insert(identifier, def);
-                    return Ok(());
-                } else {
-                    return Err(Error::InvalidWord);
-                }
-            }
-        }
-        while let Some(token) = expr.pop_front() {
-            if let Ok(n) = token.parse::<Value>() {
-                self.stack.push(n);
-                continue;
-            }
-            if let Some(x) = self.defs.get(&token) {
-                expr.extend(x.split(' ').map(|s| s.to_string()));
-            } else {
-                match &token[..] {
-                    "+" => {
-                        let op1 = self.get_number()?;
-                        let op2 = self.get_number()?;
-                        self.stack.push(op2 + op1);
-                    }
-                    "-" => {
-                        let op1 = self.get_number()?;
-                        let op2 = self.get_number()?;
-                        self.stack.push(op2 - op1);
-                    }
-                    "*" => {
-                        let op1 = self.get_number()?;
-                        let op2 = self.get_number()?;
-                        self.stack.push(op2 * op1);
-                    }
-                    "/" => {
-                        let op1 = self.get_number()?;
-                        let op2 = self.get_number()?;
-                        if op1 == 0 {
-                            return Err(Error::DivisionByZero);
-                        }
-                        self.stack.push(op2 / op1);
-                    }
-                    "dup" => {
-                        let last = match self.stack.last() {
-                            None => return Err(Error::StackUnderflow),
-                            Some(x) => *x,
-                        };
-                        self.stack.push(last);
-                    }
-                    "drop" => {
-                        if self.stack.pop().is_none() {
-                            return Err(Error::StackUnderflow);
-                        }
-                    }
-                    "swap" => {
-                        let op1 = self.get_number()?;
-                        let op2 = self.get_number()?;
-                        self.stack.push(op1);
-                        self.stack.push(op2);
-                    }
-                    "over" => {
-                        let op1 = match self.stack.iter().nth_back(1) {
-                            None => return Err(Error::StackUnderflow),
-                            Some(x) => *x,
-                        };
-
-                        self.stack.push(op1);
-                    }
-                    _ => return Err(Error::UnknownWord),
-                }
-            }
-        }
-        Ok(())
-    }
+    Ok(FONTS
+        .iter()
+        .filter(|font| matrix == font.1)
+        .next()
+        .map(|font| font.0.to_string())
+        .unwrap_or("?".to_string()))
 }
+
+type FontMatrix = [[u8; 3]; 4];
+
+const ZERO: FontMatrix = [
+    [b' ', b'_', b' '],
+    [b'|', b' ', b'|'],
+    [b'|', b'_', b'|'],
+    [b' ', b' ', b' '],
+];
+
+const ONE: FontMatrix = [
+    [b' ', b' ', b' '],
+    [b' ', b' ', b'|'],
+    [b' ', b' ', b'|'],
+    [b' ', b' ', b' '],
+];
+
+const TWO: FontMatrix = [
+    [b' ', b'_', b' '],
+    [b' ', b'_', b'|'],
+    [b'|', b'_', b' '],
+    [b' ', b' ', b' '],
+];
+
+const THREE: FontMatrix = [
+    [b' ', b'_', b' '],
+    [b' ', b'_', b'|'],
+    [b' ', b'_', b'|'],
+    [b' ', b' ', b' '],
+];
+
+const FOUR: FontMatrix = [
+    [b' ', b' ', b' '],
+    [b'|', b'_', b'|'],
+    [b' ', b' ', b'|'],
+    [b' ', b' ', b' '],
+];
+
+const FIVE: FontMatrix = [
+    [b' ', b'_', b' '],
+    [b'|', b'_', b' '],
+    [b' ', b'_', b'|'],
+    [b' ', b' ', b' '],
+];
+
+const SIX: FontMatrix = [
+    [b' ', b'_', b' '],
+    [b'|', b'_', b' '],
+    [b'|', b'_', b'|'],
+    [b' ', b' ', b' '],
+];
+
+const SEVEN: FontMatrix = [
+    [b' ', b'_', b' '],
+    [b' ', b' ', b'|'],
+    [b' ', b' ', b'|'],
+    [b' ', b' ', b' '],
+];
+
+const EIGHT: FontMatrix = [
+    [b' ', b'_', b' '],
+    [b'|', b'_', b'|'],
+    [b'|', b'_', b'|'],
+    [b' ', b' ', b' '],
+];
+
+const NINE: FontMatrix = [
+    [b' ', b'_', b' '],
+    [b'|', b'_', b'|'],
+    [b' ', b'_', b'|'],
+    [b' ', b' ', b' '],
+];
+
+const FONTS: [(usize, FontMatrix); 10] = [
+    (0, ZERO),
+    (1, ONE),
+    (2, TWO),
+    (3, THREE),
+    (4, FOUR),
+    (5, FIVE),
+    (6, SIX),
+    (7, SEVEN),
+    (8, EIGHT),
+    (9, NINE),
+];
