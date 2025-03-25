@@ -1,6 +1,4 @@
-fn main() {
-
-}
+fn main() {}
 
 use std::collections::HashMap;
 
@@ -38,24 +36,31 @@ pub enum RemoveCallbackError {
     NonexistentCallback,
 }
 
+type ComputeClosure<T> = dyn Fn(&[T]) -> T;
+
+struct ComputeCell<T> {
+    depends: Vec<CellId>,
+    compute: Box<ComputeClosure<T>>,
+    callbacks: Vec<CallbackId>,
+    dependents: Vec<ComputeCellId>,
+}
+
 pub struct Reactor<'a, T> {
     // Just so that the compiler doesn't complain about an unused type parameter.
     // You probably want to delete this field.
     input_cells: HashMap<InputCellId, (T, Vec<ComputeCellId>)>,
-    compute_cells: HashMap<
-        ComputeCellId,
-        (
-            Vec<CellId>,
-            Box<dyn Fn(&[T]) -> T>,
-            Vec<CallbackId>,
-            Vec<ComputeCellId>,
-        ),
-    >,
+    compute_cells: HashMap<ComputeCellId, ComputeCell<T>>,
     num_cells: usize,
-    // lifetime `'a` ensures that the closures remain valid for the lifetime of the Reactor
-    // instance
+    // lifetime `'a` ensures that the closures remain valid for the lifetime
+    // of the Reactor instance
     callbacks: HashMap<CallbackId, Box<dyn 'a + FnMut(T)>>,
     callback_id_gen: usize,
+}
+
+impl<T: Copy + PartialEq> Default for Reactor<'_, T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // You are guaranteed that Reactor will only be tested against types that are Copy + PartialEq.
@@ -108,7 +113,7 @@ impl<'a, T: Copy + PartialEq> Reactor<'a, T> {
                 },
                 CellId::Compute(c) => match self.compute_cells.get_mut(c) {
                     None => return Err(*dep),
-                    Some((_, _, _, dependents)) => {
+                    Some(ComputeCell { dependents, .. }) => {
                         dependents.push(id);
                     }
                 },
@@ -117,12 +122,12 @@ impl<'a, T: Copy + PartialEq> Reactor<'a, T> {
         self.num_cells += 1;
         self.compute_cells.insert(
             id,
-            (
-                dependencies.to_vec(),
-                Box::new(compute_func),
-                vec![],
-                vec![],
-            ),
+            ComputeCell {
+                depends: dependencies.to_vec(),
+                compute: Box::new(compute_func),
+                callbacks: vec![],
+                dependents: vec![],
+            },
         );
         Ok(id)
     }
@@ -137,17 +142,41 @@ impl<'a, T: Copy + PartialEq> Reactor<'a, T> {
     pub fn value(&self, id: CellId) -> Option<T> {
         match id {
             CellId::Input(i) => self.input_cells.get(&i).map(|(t, _)| *t),
-            CellId::Compute(c) => self
-                .compute_cells
-                .get(&c)
-                .map(|(deps, compute_func, _, _)| {
-                    let deps: Option<Vec<_>> = deps.iter().map(|id| self.value(*id)).collect();
-                    deps.map(|v| (compute_func)(&v))
-                })
-                .flatten(),
+            CellId::Compute(c) => self.compute_cells.get(&c).and_then(
+                |ComputeCell {
+                     depends, compute, ..
+                 }| {
+                    let deps: Option<Vec<_>> = depends.iter().map(|id| self.value(*id)).collect();
+                    deps.map(|v| (compute)(&v))
+                },
+            ),
         }
     }
 
+    fn get_all_dependents(&self, initial_dependents: &[ComputeCellId]) -> Vec<(ComputeCellId, T)> {
+        let mut results: Vec<_> = initial_dependents
+            .iter()
+            .filter_map(|compute_cell_id| {
+                let ccid = CellId::Compute(*compute_cell_id);
+                self.value(ccid)
+                    .map(|old_value| (*compute_cell_id, old_value))
+            })
+            .collect();
+        let child_dependents: Vec<_> = results
+            .iter()
+            .filter_map(|dep| {
+                self.compute_cells
+                    .get(&dep.0)
+                    .map(|ComputeCell { dependents, .. }| dependents)
+            })
+            .flatten()
+            .copied()
+            .collect();
+        if !child_dependents.is_empty() {
+            results.extend(self.get_all_dependents(&child_dependents).iter())
+        }
+        results
+    }
     // Sets the value of the specified input cell.
     //
     // Returns false if the cell does not exist.
@@ -157,25 +186,43 @@ impl<'a, T: Copy + PartialEq> Reactor<'a, T> {
     //
     // As before, that turned out to add too much extra complexity.
     pub fn set_value(&mut self, id: InputCellId, new_value: T) -> bool {
-        self.input_cells
-            .get_mut(&id)
-            .map_or(false, |(value, dependents)| {
-                if *value != new_value {
-                    *value = new_value;
-                    dependents.iter().for_each(|cid| {
-                        self.compute_cells.get(cid).map(|(deps, compute_func, callbacks, _)| {
-                            callbacks.iter().for_each(|cb_id| {
-                                self.callbacks.get_mut(cb_id).map(|cb_action| {
-                                    let deps: Option<Vec<_>> = deps.iter().map(|id| self.value(*id)).collect();
-                                    let new_compute_value = deps.map(|v| (compute_func)(&v));
-                                    (cb_action)(new_compute_value.unwrap());
-                                });
-                            });
-                        });
-                    });
-                }
-                true
+        let mut set_ok = false;
+        // use 'collect' here to avoid 'immutable borrow later used' issue
+        let old_values = match self.input_cells.get(&id) {
+            None => vec![],
+            Some((_, dependents)) => self.get_all_dependents(dependents),
+        };
+
+        if let Some((value, _)) = self.input_cells.get_mut(&id) {
+            set_ok = true;
+            *value = new_value;
+        }
+
+        let changed_compute_cells: Vec<_> = old_values
+            .iter()
+            .filter_map(|(compute_cell_id, old_value)| {
+                let ccid = CellId::Compute(*compute_cell_id);
+                self.value(ccid).and_then(|new_value| {
+                    if *old_value != new_value {
+                        Some((*compute_cell_id, new_value))
+                    } else {
+                        None
+                    }
+                })
             })
+            .collect();
+
+        for (ccid, new_value) in changed_compute_cells {
+            if let Some(ComputeCell { callbacks, .. }) = self.compute_cells.get(&ccid) {
+                callbacks.iter().for_each(|cb_id| {
+                    if let Some(cb_action) = self.callbacks.get_mut(cb_id) {
+                        (cb_action)(new_value);
+                    }
+                });
+            }
+        }
+
+        set_ok
     }
 
     // Adds a callback to the specified compute cell.
@@ -195,13 +242,15 @@ impl<'a, T: Copy + PartialEq> Reactor<'a, T> {
         id: ComputeCellId,
         callback: F,
     ) -> Option<CallbackId> {
-        self.compute_cells.get_mut(&id).map(|(_, _, callbacks, _)| {
-            let id = CallbackId(self.callback_id_gen);
-            self.callback_id_gen += 1;
-            self.callbacks.insert(id, Box::new(callback));
-            callbacks.push(id);
-            id
-        })
+        self.compute_cells
+            .get_mut(&id)
+            .map(|ComputeCell { callbacks, .. }| {
+                let id = CallbackId(self.callback_id_gen);
+                self.callback_id_gen += 1;
+                self.callbacks.insert(id, Box::new(callback));
+                callbacks.push(id);
+                id
+            })
     }
 
     // Removes the specified callback, using an ID returned from add_callback.
@@ -215,7 +264,7 @@ impl<'a, T: Copy + PartialEq> Reactor<'a, T> {
         callback: CallbackId,
     ) -> Result<(), RemoveCallbackError> {
         match self.compute_cells.get_mut(&cell) {
-            Some((.., callbacks, _)) => {
+            Some(ComputeCell { callbacks, .. }) => {
                 let found = callbacks.iter().enumerate().find(|(_, n)| **n == callback);
                 if found.is_none() {
                     return Err(RemoveCallbackError::NonexistentCallback);
