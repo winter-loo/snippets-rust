@@ -3,6 +3,7 @@
 // You are free to use anything in it, but it's mainly for the test framework.
 mod pre_implemented;
 
+#[derive(Debug)]
 struct Node<T> {
     value: T,
     prev: *mut Node<T>,
@@ -30,7 +31,7 @@ pub struct Cursor<'a, T> {
 }
 
 pub struct Iter<'a, T> {
-    this: &'a LinkedList<T>,
+    list: &'a LinkedList<T>,
 }
 
 impl<T> LinkedList<T> {
@@ -71,51 +72,86 @@ impl<T> LinkedList<T> {
 
     /// Return an iterator that moves from front to back
     pub fn iter(&self) -> Iter<'_, T> {
-        Iter {
-            this: self,
-        }
+        Iter { this: self }
     }
 }
 
 // the cursor is expected to act as if it is at the position of an element
 // and it also has to work with and be able to insert into an empty list.
-impl<T> Cursor<'_, T> {
+impl<T: Clone> Cursor<'_, T> {
     /// Take a mutable reference to the current element
     pub fn peek_mut(&mut self) -> Option<&mut T> {
-        todo!()
+        self.node.as_mut().map(|v| &mut v.value)
     }
 
     /// Move one position forward (towards the back) and
     /// return a reference to the new position
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<&mut T> {
-        todo!()
+        self.node = self.node.as_mut().map(|n| unsafe { &mut *n.next });
+        self.peek_mut()
     }
 
     /// Move one position backward (towards the front) and
     /// return a reference to the new position
     pub fn prev(&mut self) -> Option<&mut T> {
-        todo!()
+        self.node = self.node.as_mut().map(|n| unsafe { &mut *n.prev });
+        self.peek_mut()
     }
 
     /// Remove and return the element at the current position and move the cursor
     /// to the neighboring element that's closest to the back. This can be
     /// either the next or previous position.
     pub fn take(&mut self) -> Option<T> {
-        todo!()
+        let node = self.node.take();
+        node.map(|n| {
+            self.node = Some(unsafe { &mut *n.next as &mut Node<T> });
+            n.next = std::ptr::null_mut();
+            n.prev = std::ptr::null_mut();
+            n.value.clone()
+        })
     }
 
     pub fn insert_after(&mut self, element: T) {
-        let node = Node {
+        let node = Box::leak(Box::new(Node {
             value: element,
             prev: std::ptr::null_mut(),
             next: std::ptr::null_mut(),
-        };
-        self.node
+        }));
+        match &mut self.node {
+            None => {
+                self.node = Some(node);
+            }
+            Some(x) => {
+                if !x.next.is_null() {
+                    unsafe { &mut *x.next }.prev = node as *mut Node<T>;
+                }
+                node.next = x.next;
+                node.prev = *x as *mut Node<T>;
+                x.next = node as *mut Node<T>;
+            }
+        }
     }
 
-    pub fn insert_before(&mut self, _element: T) {
-        todo!()
+    pub fn insert_before(&mut self, element: T) {
+        let node = Box::leak(Box::new(Node {
+            value: element,
+            prev: std::ptr::null_mut(),
+            next: std::ptr::null_mut(),
+        }));
+        match &mut self.node {
+            None => {
+                self.node = Some(node);
+            }
+            Some(x) => {
+                if !x.prev.is_null() {
+                    unsafe { &mut *x.prev }.next = node as *mut Node<T>;
+                }
+                node.prev = x.prev;
+                node.next = *x as *mut Node<T>;
+                x.prev = node as *mut Node<T>;
+            }
+        }
     }
 }
 
@@ -123,6 +159,6 @@ impl<'a, T> Iterator for Iter<'a, T> {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<&'a T> {
-        todo!()
+        self.list
     }
 }
