@@ -11,7 +11,7 @@ struct Node {
 
 enum ListImpl {
     Empty,
-    ListImpl(Box<Node>),
+    More(Box<Node>),
 }
 
 impl List {
@@ -26,13 +26,13 @@ impl List {
             value: elem,
             next: mem::replace(&mut self.head, ListImpl::Empty),
         });
-        self.head = ListImpl::ListImpl(new_node);
+        self.head = ListImpl::More(new_node);
     }
 
     pub fn pop(&mut self) -> Option<usize> {
         match &mut self.head {
             ListImpl::Empty => None,
-            ListImpl::ListImpl(node) => {
+            ListImpl::More(node) => {
                 let value = Some(node.value);
                 self.head = mem::replace(&mut node.next, ListImpl::Empty);
                 value
@@ -43,10 +43,22 @@ impl List {
     pub fn pop2(&mut self) -> Option<usize> {
         match mem::replace(&mut self.head, ListImpl::Empty) {
             ListImpl::Empty => None,
-            ListImpl::ListImpl(node) => {
+            ListImpl::More(node) => {
                 self.head = node.next;
                 Some(node.value)
             }
+        }
+    }
+}
+
+impl Drop for List {
+    fn drop(&mut self) {
+        // memory of `self.head` moved to `link`
+        let mut link = mem::replace(&mut self.head, ListImpl::Empty);
+        // memory of `link` moved to `boxed_node`
+        while let ListImpl::More(mut boxed_node) = link {
+            link = mem::replace(&mut boxed_node.next, ListImpl::Empty);
+            // `boxed_node` goes out of scope and memory released
         }
     }
 }
