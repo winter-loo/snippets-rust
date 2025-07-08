@@ -1,6 +1,6 @@
 use std::mem;
 
-struct List {
+pub struct List {
     head: ListImpl,
 }
 
@@ -15,13 +15,13 @@ enum ListImpl {
 }
 
 impl List {
-    fn new() -> Self {
+    pub fn new() -> Self {
         List {
             head: ListImpl::Empty,
         }
     }
 
-    fn push(&mut self, elem: usize) {
+    pub fn push(&mut self, elem: usize) {
         let new_node = Box::new(Node {
             value: elem,
             next: mem::replace(&mut self.head, ListImpl::Empty),
@@ -29,7 +29,7 @@ impl List {
         self.head = ListImpl::ListImpl(new_node);
     }
 
-    fn pop(&mut self) -> Option<usize> {
+    pub fn pop(&mut self) -> Option<usize> {
         match &mut self.head {
             ListImpl::Empty => None,
             ListImpl::ListImpl(node) => {
@@ -40,7 +40,7 @@ impl List {
         }
     }
 
-    fn pop2(&mut self) -> Option<usize> {
+    pub fn pop2(&mut self) -> Option<usize> {
         match mem::replace(&mut self.head, ListImpl::Empty) {
             ListImpl::Empty => None,
             ListImpl::ListImpl(node) => {
@@ -48,5 +48,45 @@ impl List {
                 Some(node.value)
             }
         }
+    }
+}
+
+impl Default for List {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn basic() {
+        let mut list = List::new();
+
+        // Check empty list behaves right
+        assert_eq!(list.pop(), None);
+
+        // Populate list
+        list.push(1);
+        list.push(2);
+        list.push(3);
+
+        // Check normal removal
+        assert_eq!(list.pop(), Some(3));
+        assert_eq!(list.pop(), Some(2));
+
+        // Push some more just to make sure nothing's corrupted
+        list.push(4);
+        list.push(5);
+
+        // Check normal removal
+        assert_eq!(list.pop(), Some(5));
+        assert_eq!(list.pop(), Some(4));
+
+        // Check exhaustion
+        assert_eq!(list.pop(), Some(1));
+        assert_eq!(list.pop(), None);
     }
 }
