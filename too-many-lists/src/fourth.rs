@@ -11,45 +11,50 @@ pub struct Node<T> {
 
 impl<T> Node<T> {
     pub fn new(value: T) -> Self {
-        Self { value, next: None }
+        Self {
+            value,
+            next: std::ptr::null_mut(),
+        }
     }
 }
 
-type Link<T> = Option<Box<Node<T>>>;
+type Link<T> = *mut Node<T>;
 
 impl<T> List<T> {
     pub fn new() -> Self {
         Self {
-            head: None,
+            head: std::ptr::null_mut(),
             tail: std::ptr::null_mut(),
         }
     }
 
     // push new value at the tail of list
     pub fn push(&mut self, value: T) {
-        let mut new_node = Box::new(Node::new(value));
-        // node_pointer value will not change even box is moved!
-        let node_pointer = new_node.as_mut() as *mut _;
+        // Still use Box for heap memory allocation but convert it to raw pointer
+        // for later use
+        let new_node = Box::into_raw(Box::new(Node::new(value)));
         if self.tail.is_null() {
-            assert!(self.head.is_none());
-            self.head = Some(new_node);
+            assert!(self.head.is_null());
+            self.head = new_node;
         } else {
             unsafe {
-                (*self.tail).next = Some(new_node);
+                (*self.tail).next = new_node;
             }
         }
-        self.tail = node_pointer;
+        self.tail = new_node;
     }
 
     // pop at the head of the list
     pub fn pop(&mut self) -> Option<T> {
-        self.head.take().map(|old_head| {
-            self.head = old_head.next;
-            if self.head.is_none() {
-                self.tail = std::ptr::null_mut();
-            }
-            old_head.value
-        })
+        if !self.head.is_null() {
+            // Still use Box to manage heap memory
+            let head = unsafe { Box::from_raw(self.head) };
+            self.head = head.next;
+            Some(head.value)
+        } else {
+            self.tail = std::ptr::null_mut();
+            None
+        }
     }
 }
 
@@ -74,17 +79,25 @@ mod test {
         list.push(2);
         list.push(3);
 
+        // 1 -> 2 -> 3
+
         // Check normal removal
         assert_eq!(list.pop(), Some(1));
         assert_eq!(list.pop(), Some(2));
+
+        // 3
 
         // Push some more just to make sure nothing's corrupted
         list.push(4);
         list.push(5);
 
+        // 3 -> 4 -> 5
+
         // Check normal removal
         assert_eq!(list.pop(), Some(3));
         assert_eq!(list.pop(), Some(4));
+
+        // 5
 
         // Check exhaustion
         assert_eq!(list.pop(), Some(5));
@@ -93,6 +106,8 @@ mod test {
         // Check the exhaustion case fixed the pointer right
         list.push(6);
         list.push(7);
+
+        // 6 -> 7
 
         // Check normal removal
         assert_eq!(list.pop(), Some(6));
