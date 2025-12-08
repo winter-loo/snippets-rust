@@ -1,4 +1,3 @@
-use std::pin::Pin;
 use std::sync::mpsc;
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 use std::time::Duration;
@@ -37,7 +36,18 @@ impl RunLoop {
         loop {
             match self.rx.recv() {
                 Ok(mut task) => {
-                    // task.as_mut().poll();
+                    println!("received a task");
+                    let waker = unsafe { Waker::new(std::ptr::null(), &VTABLE) };
+                    let mut ctx = Context::from_waker(&waker);
+
+                    match task.as_mut().poll(&mut ctx) {
+                        Poll::Ready(_) => {
+                            println!("task ready");
+                        }
+                        Poll::Pending => {
+                            println!("task pending");
+                        }
+                    }
                 }
                 Err(_) => {
                     panic!("task receiving error");
@@ -68,13 +78,10 @@ impl Future for MyTask {
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
-        let waker = cx.waker();
-        let runloop = unsafe { waker.data() as *const RunLoop };
         if std::time::Instant::now() - self.start_time < self.sleep_time {
             Poll::Pending
         } else {
             std::task::Poll::Ready((std::time::Instant::now() - self.start_time).as_secs())
-            // waker.wake();
         }
     }
 }
@@ -90,24 +97,11 @@ const VTABLE: RawWakerVTable = RawWakerVTable::new(
 );
 
 fn main() {
-    let mut t = MyTask::new(Duration::from_secs(10));
-    let t = Pin::new(&mut t);
+    let t = MyTask::new(Duration::from_secs(10));
 
     let mut runloop = RunLoop::new(20);
     let spawner = runloop.spawner();
-    spawner.spawn(async { 1 });
+    spawner.spawn(t);
 
     runloop.run();
-
-    let raw_waker = RawWaker::new(std::ptr::null(), &VTABLE);
-
-    let waker = unsafe { Waker::from_raw(raw_waker) };
-    let mut c = Context::from_waker(&waker);
-
-    // loop {
-    match t.poll(&mut c) {
-        Poll::Ready(v) => println!("DONE: {v:?}"),
-        Poll::Pending => println!("pending"),
-    }
-    // }
 }
