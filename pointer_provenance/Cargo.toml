@@ -1,0 +1,13 @@
+[package]
+name = "foo"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+raw_integer_pointer_cast=[]
+strict_provenance_api_pointer_misuse_detected=[]
+strict_provenance_api=[]
+exposed_provenance_api=[]
+default = ["raw_integer_pointer_cast"]
+
+[dependencies]
