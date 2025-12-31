@@ -46,6 +46,12 @@ macro_rules! scope_var {
     };
 }
 
+macro_rules! ignore_any {
+    ($($any:tt)*) => {
+        println!("anything can be matched");
+    };
+}
+
 fn main() {
     four!();
     four!(fn);
@@ -61,4 +67,16 @@ fn main() {
     println!("a={a}");
     scope_var!(a);
     println!("a={a}");
+
+    ignore_any!();
+    ignore_any!(2);
+    ignore_any!(a);
+    ignore_any!({
+        _ = &mut future1 => {
+            println!("do_stuff: arm1 future finished");
+        }
+        _ = sleep(Duration::from_millis(500)) => {
+            do_async_thing("op2", lock.clone()).await;
+        }
+    });
 }
