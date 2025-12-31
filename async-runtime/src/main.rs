@@ -1,7 +1,7 @@
 #[cfg(target_os = "linux")]
 mod linux_impl {
     use std::collections::HashMap;
-    use std::future::Future;
+    use std::future::{poll_fn, Future};
     use std::io;
     use std::mem::MaybeUninit;
     use std::os::unix::io::RawFd;
@@ -94,8 +94,7 @@ mod linux_impl {
                 }
 
                 // 2. Wait for IO events (Reactor)
-                // We wait indefinitely here because we have no other work.
-                let n = unsafe { libc::epoll_wait(epfd, events.as_mut_ptr(), 32, -1) };
+                let n = unsafe { libc::epoll_wait(epfd, events.as_mut_ptr(), 32, 0) };
 
                 if n < 0 {
                     let err = io::Error::last_os_error();
@@ -293,6 +292,11 @@ fn main() {
     let runloop = RunLoop::new(10);
     let spawner = runloop.spawner();
 
+    // rust compiler will convert async block to an invisible compiler-generated future
+    // which has a poll method. Inside the poll method, a state machine runs from start
+    // to end.
+    //
+    // Each state corresponds to an 'await' in the async block.
     spawner.spawn(async {
         use std::time::Duration;
 
